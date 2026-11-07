@@ -22,3 +22,6 @@ Thumbs.db
 gateway/events.local.jsonl
 launcher/empty.ini
 infra/gateway_role.txt
+
+# island (teammate #2)
+island/config.js

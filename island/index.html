@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MYTOPIA · island</title>
+<!-- three.js is vendored: no CDN at runtime (venue wifi) -->
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/three.module.js",
+  "three/addons/controls/OrbitControls.js": "./vendor/three/OrbitControls.js"
+} }
+</script>
+<!-- window.MYTOPIA = {api, adminToken, pollMs, staleAfterMs}. Served by the gateway; git-ignored locally (see config.example.js). -->
+<script src="config.js" onerror="window.MYTOPIA = window.MYTOPIA || null"></script>
+<style>
+@font-face { font-family: "Pixelify Sans"; src: url("fonts/pixelify-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Pixelify Sans"; src: url("fonts/pixelify-sans-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: block; }
+@font-face { font-family: "VT323"; src: url("fonts/vt323-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: block; }
+:root {
+  --ink: #2b221e; --cream: #f3ead7; --paper: #fbf7ee; --orange: #f2892b; --peach: #f7d9b4;
+  --good: #3f8a56; --bad: #b4553e; --warn: #d9a032; --dim: #7a6f62; --line: #d8cbb3;
+  --px: "Pixelify Sans", "VT323", monospace; --vt: "VT323", monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--cream); color: var(--ink); font-family: var(--px); }
+three-d-stage { position: fixed; inset: 0; display: block; }
+three-d-stage:not(:defined) { visibility: hidden; }
+.paper { background: var(--paper); border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); }
+.hud { position: fixed; z-index: 5; }
+
+/* mode badge, top right */
+#mode { top: 12px; right: 12px; padding: 4px 12px; font-family: var(--vt); font-size: 26px; line-height: 1.1; text-align: right; }
+#mode.LIVE { background: var(--good); color: #fff; }
+#mode.STALE { background: var(--warn); color: var(--ink); }
+#mode.REPLAY { background: #8a8278; color: #fff; }
+#mode small { display: block; font-size: 16px; opacity: .9; }
+
+/* brand, top left */
+#brand { top: 12px; left: 12px; padding: 4px 12px; font-weight: 600; font-size: 20px; }
+#brand span { color: var(--orange); }
+
+/* banner, top centre, 44px, 2 s */
+#banner { top: 14px; left: 50%; transform: translateX(-50%); padding: 2px 22px; font-weight: 600; font-size: 44px; letter-spacing: 1px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
+#banner.on { opacity: 1; }
+#banner.good { background: var(--good); color: #fff; } #banner.bad { background: var(--bad); color: #fff; }
+#banner.warn { background: var(--warn); } #banner.muted { background: var(--paper); }
+
+/* agent card, bottom left (Mytopia's room card) */
+#card { left: 12px; bottom: 64px; width: 300px; padding: 10px 12px; font-size: 15px; }
+#card .tabs { display: flex; gap: 6px; margin-bottom: 6px; }
+#card .tabs button { font: inherit; font-size: 14px; border: 2px solid var(--ink); background: var(--paper); padding: 1px 8px; cursor: pointer; }
+#card .tabs button.sel { background: var(--orange); }
+#card h2 { margin: 0; font-size: 22px; font-weight: 600; }
+#card .sub { font-family: var(--vt); font-size: 18px; color: var(--dim); }
+#card .row { display: flex; justify-content: space-between; font-family: var(--vt); font-size: 20px; line-height: 1.15; }
+#card .status { display: inline-block; padding: 0 8px; border: 2px solid var(--ink); font-family: var(--vt); font-size: 20px; }
+.st-none { background: #d7d0c4; } .st-active { background: var(--good); color: #fff; } .st-revoked { background: var(--bad); color: #fff; }
+.st-kill { background: var(--warn); } .st-stopped { background: var(--ink); color: var(--cream); }
+#card .note { font-family: var(--vt); font-size: 19px; color: var(--bad); min-height: 0; }
+
+/* ticker, bottom */
+#ticker { left: 12px; right: 12px; bottom: 12px; padding: 4px 12px; font-family: var(--vt); font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ticker .line { background: var(--peach); padding: 0 6px; }
+#ticker .seq { color: var(--dim); margin-right: 6px; }
+
+/* operator panel, right (Mytopia's Needs-you panel) */
+#ops { right: 12px; top: 76px; width: 200px; padding: 10px 12px; }
+#ops h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+#ops .count { font-family: var(--vt); font-size: 54px; line-height: 1; color: var(--bad); }
+#ops .lbl { font-family: var(--vt); font-size: 18px; color: var(--dim); margin-bottom: 8px; }
+#ops .for { font-family: var(--vt); font-size: 18px; margin: 4px 0 6px; }
+#ops button { display: block; width: 100%; margin: 6px 0; padding: 6px 8px; font: 600 18px var(--px); border: 3px solid var(--ink); background: var(--paper); box-shadow: 3px 3px 0 var(--ink); cursor: pointer; text-align: left; }
+#ops button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+#ops button[data-act=revoke] { background: #f6dfd8; } #ops button[data-act=kill] { background: #f3c3b6; }
+#ops button[data-act=restore] { background: #dfeedf; }
+#ops button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+#ops .hint { font-family: var(--vt); font-size: 16px; color: var(--dim); margin-top: 6px; }
+
+/* things drawn over the 3D scene */
+#overlay { position: fixed; inset: 0; pointer-events: none; z-index: 4; }
+.tag { position: absolute; transform: translate(-50%, -100%); font-family: var(--vt); font-size: 18px; background: var(--paper); border: 2px solid var(--ink); padding: 0 6px; white-space: nowrap; }
+.tag.place { background: var(--ink); color: var(--cream); font-size: 20px; }
+.bubble { position: absolute; transform: translate(-50%, calc(-100% - 26px)); max-width: 280px; font-family: var(--vt); font-size: 19px; line-height: 1.05; background: var(--paper); border: 2px solid var(--ink); padding: 3px 8px; box-shadow: 2px 2px 0 var(--ink); white-space: normal; }
+.bubble.bad { background: #f6dfd8; } .bubble.good { background: #dfeedf; }
+.stamp { position: absolute; transform: translate(-50%, -50%) rotate(-8deg); font: 600 36px var(--px); color: var(--bad); border: 4px solid var(--bad); padding: 0 10px; background: rgba(251, 247, 238, .85); white-space: nowrap; animation: stamp 1.6s ease-out forwards; }
+@keyframes stamp { 0% { transform: translate(-50%, -50%) rotate(-8deg) scale(1.8); opacity: 0; } 12% { transform: translate(-50%, -50%) rotate(-8deg) scale(1); opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+.bincount { position: absolute; transform: translate(-50%, -100%); font: 600 18px var(--px); background: var(--bad); color: #fff; border: 2px solid var(--ink); padding: 0 8px; }
+
+/* T table and robot JSON */
+.sheet { position: fixed; inset: 60px 230px 70px 20px; z-index: 8; overflow: auto; padding: 12px; display: none; }
+.sheet.on { display: block; }
+.sheet h3 { margin: 0 0 8px; }
+.sheet table { border-collapse: collapse; width: 100%; font-family: var(--vt); font-size: 18px; }
+.sheet th, .sheet td { border-bottom: 1px solid var(--line); padding: 2px 6px; text-align: left; vertical-align: top; }
+.sheet th { background: var(--ink); color: var(--cream); position: sticky; top: 0; }
+.sheet td:nth-child(2) { white-space: nowrap; }
+.sheet .allow { color: var(--good); } .sheet .deny { color: var(--bad); }
+.sheet pre { font-family: var(--vt); font-size: 18px; white-space: pre-wrap; margin: 0; }
+
+/* about 800 px wide: the terminal takes the right 38 percent of the projector */
+@media (max-width: 900px) {
+  #banner { font-size: 32px; } #card { width: 250px; font-size: 13px; } #card h2 { font-size: 18px; }
+  #ops { width: 146px; top: 70px; padding: 8px; } #ops .count { font-size: 38px; } #ops .lbl, #ops .for, #ops .hint { font-size: 15px; } #ops button { font-size: 14px; padding: 3px 6px; margin: 4px 0; }
+  #mode { font-size: 22px; } .tag.place { font-size: 16px; }
+  #ticker { font-size: 18px; } .bubble { font-size: 16px; max-width: 200px; } .stamp { font-size: 28px; }
+  .sheet { inset: 56px 190px 60px 10px; }
+}
+</style>
+</head>
+<body>
+<three-d-stage name="mytopia-island" pixel="2" bare background="#f3ead7"></three-d-stage>
+<div id="overlay"></div>
+
+<div id="brand" class="hud paper">MY<span>TOPIA</span></div>
+<div id="mode" class="hud paper STALE">STALE<small>no gateway yet</small></div>
+<div id="banner" class="hud paper"></div>
+
+<div id="card" class="hud paper">
+  <div class="tabs" id="tabs"></div>
+  <h2 id="c-name">Research Bot</h2>
+  <div class="sub" id="c-sub">client —</div>
+  <div class="row"><span>status</span><span class="status st-none" id="c-status">NO RUN</span></div>
+  <div class="row"><span>badge</span><span id="c-badge">—</span></div>
+  <div class="row"><span>calls allowed</span><span id="c-calls">0</span></div>
+  <div class="row"><span>calls blocked</span><span id="c-blocked">0</span></div>
+  <div class="note" id="c-note"></div>
+</div>
+
+<div id="ops" class="hud paper">
+  <h3>BLOCKED</h3>
+  <div class="count" id="o-count">0</div>
+  <div class="lbl">calls refused at the gate</div>
+  <div class="for" id="o-for">acts on: research-bot</div>
+  <button data-act="revoke">REVOKE</button>
+  <button data-act="restore">RESTORE</button>
+  <button data-act="kill">KILL</button>
+  <button data-act="reset">RESET</button>
+  <div class="hint">T table · R replay · Esc close</div>
+</div>
+
+<div id="ticker" class="hud paper"><span class="line">waiting for the gateway…</span></div>
+
+<div id="table" class="sheet paper"><h3>Every event seen</h3><table><thead><tr><th>seq</th><th>ts</th><th>agent</th><th>tool</th><th>decision</th><th>rule</th><th>reason</th><th>latency_ms</th></tr></thead><tbody id="t-body"></tbody></table></div>
+<div id="json" class="sheet paper"><h3 id="j-title">Latest event</h3><pre id="j-body"></pre></div>
+
+<script src="three-d-stage.js"></script>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
