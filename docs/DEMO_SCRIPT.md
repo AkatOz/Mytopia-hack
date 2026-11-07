@@ -71,7 +71,7 @@ Island draws: green sparks from the gatehouse to Files and GitHub, the robot wal
 
 Say (Daniel, while the allows draw): "The model is Nova 2 Lite on Bedrock. We gave it a stale tool catalog on purpose: it was offered all six tools, because real agents carry cached tool lists."
 
-Say (Bob, on the deny): "Nova tried to send the email the task asked for. The list said four tools; the call for the fifth was refused at the gateway. Filtering the list is hygiene, the check on every call is the control. And no model decides this: it is one function, an allow-list and a status flag. About 160 to 180 milliseconds per decision, and that is a strongly consistent DynamoDB read on every single call."
+Say (Bob, on the deny): "Nova tried to send the email the task asked for. The list said four tools; the call for the fifth was refused at the gateway. Filtering the list is hygiene, the check on every call is the control. And no model decides this: it is one function, an allow-list and a status flag. About 80 milliseconds per decision, one round trip to us-east-1, and that is a strongly consistent DynamoDB read on every single call." (Say the p50 that `GET /stats` shows in rehearsal 1, if it differs.)
 
 ### Beat 3, 1:05 to 1:40: revoke access mid-task
 
@@ -95,7 +95,7 @@ Click **KILL** on the island.
 Terminal B prints:
 
 ```text
-launcher: KILLED -> taskkill in NNN ms
+launcher: KILLED -> psutil in NNN ms (kill to process gone)
 launcher: run-xxxx stopped, exit 1 (killed by harness)
 ```
 

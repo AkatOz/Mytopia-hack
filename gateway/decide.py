@@ -32,6 +32,8 @@ def decide(row: dict | None, tool: str) -> Decision:
         when = short_time(row.get("revoked_at"))
         return Decision(False, "status-revoked", f"badge REVOKED at {when} by {row.get('revoked_by')}")
     if status != "ACTIVE":
+        # Any other status (a typo, a hand-edited row) fails closed. The rule set is closed, so it is filed under
+        # status-revoked: "the badge is not active", drawn by the island like a revoke; the reason names the real status.
         return Decision(False, "status-revoked", f"badge status {status} is not ACTIVE")
     allowed = list(row.get("allowed_tools") or [])
     if tool == "tools/list":

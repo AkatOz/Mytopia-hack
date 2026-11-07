@@ -17,6 +17,9 @@ from dotenv import dotenv_values
 ROOT = Path(__file__).resolve().parent.parent
 EMPTY_INI = ROOT / "launcher" / "empty.ini"
 OS_BASICS = ["PATH", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "COMSPEC", "PATHEXT"]
+DEFAULT_POLL_MS = 250   # how often the badge status is read; the worst case from KILL to the kill starting
+KILL_WAIT_S = 2.0       # how long psutil waits for the tree to die before taskkill gets a second go
+HTTP_TIMEOUT_S = 2.0    # control API calls go to 127.0.0.1; a slow answer must not hold up the kill loop
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -158,26 +161,61 @@ def read_status(client: httpx.Client, agent_id: str) -> str | None:
         return None
 
 
-def kill_tree(pid: int) -> str:
-    """Kill pid and all its children (taskkill on Windows, killpg elsewhere, psutil as the fallback)."""
-    if os.name == "nt":
-        if subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True).returncode == 0:
-            return "taskkill"
-    else:
-        try:
-            os.killpg(os.getpgid(pid), 9)
-            return "killpg"
-        except OSError:
-            pass
+def kill_with_psutil(pid: int) -> bool:
+    """Kill pid's children (all levels) and then pid itself, and wait up to 2 s; True when every one of them is gone.
+    Measured on the demo laptop: 23-28 ms, against 350-450 ms for taskkill /T /F (which starts a new process)."""
     import psutil
 
     try:
         parent = psutil.Process(pid)
-        for p in parent.children(recursive=True) + [parent]:
-            p.kill()
+        procs = parent.children(recursive=True) + [parent]  # children first: listed while the parent still exists
     except psutil.NoSuchProcess:
-        pass
-    return "psutil"
+        return True
+    except psutil.Error:
+        return False  # AccessDenied or similar: never raise out of a kill, let the taskkill pass have its go
+    for p in procs:
+        try:
+            p.kill()
+        except psutil.Error:
+            pass  # already gone, or denied: wait_procs reports a survivor and the taskkill pass follows
+    try:
+        _, alive = psutil.wait_procs(procs, timeout=KILL_WAIT_S)
+    except psutil.Error:
+        return False
+    return not alive
+
+
+def kill_tree(pid: int) -> str:
+    """Kill pid and all its children: psutil first, then taskkill /T /F (Windows) or killpg as a second pass."""
+    if kill_with_psutil(pid):
+        return "psutil"
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+    else:
+        try:
+            os.killpg(os.getpgid(pid), 9)
+        except OSError:
+            pass
+    return "psutil+taskkill" if os.name == "nt" else "psutil+killpg"
+
+
+def stop_child(proc: subprocess.Popen) -> str:
+    """Kill the agent's process tree and reap it; returns how it was killed. Never raises on a slow exit."""
+    method = kill_tree(proc.pid)
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        method += " (still exiting after 15 s)"
+    return method
+
+
+def stop_if_unowned(proc: subprocess.Popen, how: str) -> str:
+    """After the watch loop: if no kill was done yet ("exited") and the agent still runs, an unexpected error left the
+    loop, so kill it now. After a kill that was merely slow, never kill twice or replace the real reason."""
+    if how == "exited" and proc.poll() is None:
+        stop_child(proc)
+        return "launcher error"
+    return how
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -187,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = {k: v or "" for k, v in dotenv_values(env_file).items()} if env_file.exists() else {}
     gateway_url = (args.gateway_url or cfg.get("GATEWAY_URL") or "http://127.0.0.1:8787").rstrip("/")
     token_mode = args.token_mode or cfg.get("TOKEN_MODE") or "local"
-    poll_s = (args.poll_ms or int(cfg.get("HARNESS_POLL_MS") or 1000)) / 1000
+    poll_s = (args.poll_ms or int(cfg.get("HARNESS_POLL_MS") or DEFAULT_POLL_MS)) / 1000
     mode = "scripted" if args.scripted else "model"
     task_path = Path(args.task) if Path(args.task).is_absolute() else ROOT / args.task
     if mode == "model" and not cfg.get("AWS_BEARER_TOKEN_BEDROCK"):
@@ -222,30 +260,31 @@ def own_run(args: argparse.Namespace, cfg: dict[str, str], token: str, client_id
     print(f"launcher: {run_id} started {args.agent} ({mode}) pid {proc.pid}", flush=True)
 
     admin = {"X-Admin-Token": cfg.get("ADMIN_TOKEN") or "change-me"}
-    with httpx.Client(base_url=gateway_url, headers=admin, timeout=5.0) as client:
+    with httpx.Client(base_url=gateway_url, headers=admin, timeout=HTTP_TIMEOUT_S) as client:
         post(client, f"/runs/{run_id}/started",
              {"agent": args.agent, "task": task_name, "agent_mode": mode, "pid": proc.pid,
               "client_id": client_id, "expires_in": expires_in})
-        how = "exited"
+        how, kill_ms = "exited", None
         next_rotation = time.monotonic() + rotation_interval(expires_in)
         try:
             while proc.poll() is None:
                 if read_status(client, args.agent) == "KILLED":
                     t0 = time.monotonic()
-                    method = kill_tree(proc.pid)
-                    proc.wait(timeout=15)
+                    method = stop_child(proc)
+                    kill_ms = int((time.monotonic() - t0) * 1000)
                     how = "killed by harness"
-                    print(f"launcher: KILLED -> {method} in {int((time.monotonic() - t0) * 1000)} ms", flush=True)
+                    print(f"launcher: KILLED -> {method} in {kill_ms} ms (kill to process gone)", flush=True)
                     break
                 if time.monotonic() >= next_rotation:
                     next_rotation = rotate(args.agent, token_mode, cfg, ttl_s, token_file)
                 time.sleep(poll_s)
         except KeyboardInterrupt:
-            kill_tree(proc.pid)
-            proc.wait(timeout=15)
+            stop_child(proc)
             how = "launcher interrupted"
-        code = proc.returncode
-        post(client, f"/runs/{run_id}/stopped", {"exit_code": code, "how": how})
+        finally:  # run_stopped is posted on every path, so the island never waits for a run that is gone
+            how = stop_if_unowned(proc, how)  # never leave an agent running unowned
+            code = proc.poll()
+            post(client, f"/runs/{run_id}/stopped", {"exit_code": code, "how": how, "kill_ms": kill_ms})
     print(f"launcher: {run_id} stopped, exit {code} ({how})", flush=True)
     return 0
 

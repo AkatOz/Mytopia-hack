@@ -19,6 +19,8 @@ from strands.tools.mcp import MCPClient
 
 ROOT = Path(__file__).resolve().parent.parent
 POLL_PATH = "/drive/q3-planning.md"
+POLL_S = 3.0        # one poll starts every 3 s, so a revoke is seen within about 3 s
+MIN_GAP_S = 0.2     # even after a slow call, pause a little before the next one
 TOKEN_EXPIRED_EXIT = 3
 
 SYSTEM_PROMPT = """You are Research Bot, an assistant at Example Corp. You act only through the tools you are given.
@@ -96,29 +98,44 @@ def exit_token_expired(name: str) -> None:
     os._exit(TOKEN_EXPIRED_EXIT)  # the MCP client's background thread must not keep the process alive
 
 
-def result_line(name: str, result: Any, ms: int) -> str:
-    """'ALLOW read_file 11 ms' or 'DENY send_email: <reason> [rule: ...]', parsed from the tool result text."""
+def gateway_ms(result: Any) -> int | None:
+    """The gateway's own decision time from the result's _meta (Strands passes it on as "metadata"), or None."""
+    meta = result.get("metadata") if isinstance(result, dict) else None
+    value = meta.get("mytopia/latency_ms") if isinstance(meta, dict) else None
+    return value if isinstance(value, int) else None
+
+
+def result_line(name: str, result: Any) -> str:
+    """'ALLOW read_file (gateway 79 ms)' or 'DENY send_email: <reason> [rule: ...]', parsed from the tool result.
+    Only the gateway's own time is printed: the time seen here includes the demo pace and would mislead."""
     text = result_text(result)
     if text.startswith("DENIED:"):
         return f"DENY {name}: {text[len('DENIED:'):].strip()}"
     if isinstance(result, dict) and result.get("status") == "error":
         return f"ERROR {name}: {text[:160]}"
-    return f"ALLOW {name} {ms} ms"
+    ms = gateway_ms(result)
+    return f"ALLOW {name}" + (f" (gateway {ms} ms)" if ms is not None else "")
 
 
 def call(client: MCPClient, name: str, arguments: dict[str, Any]) -> None:
     """Call one tool through the gateway and print its one-line outcome; a deny is a result, never an exception."""
-    t0 = time.monotonic()
     result = client.call_tool_sync(f"scripted-{time.time_ns()}", name, arguments)
     if token_rejected(result):
         exit_token_expired(name)
-    print(result_line(name, result, int((time.monotonic() - t0) * 1000)), flush=True)
+    print(result_line(name, result), flush=True)
+
+
+def next_wait(call_started: float, now: float) -> float:
+    """Seconds to sleep so polls start every POLL_S seconds: POLL_S minus the call's time, never under MIN_GAP_S."""
+    return max(MIN_GAP_S, POLL_S - (now - call_started))
 
 
 def poll_forever(client: MCPClient) -> None:
-    """Every 3 s, read the planning file directly through the gateway (no model turn) and print the outcome."""
+    """Every 3 s (a fixed cadence: the call's own time counts), read the planning file through the gateway, no model turn."""
+    started = time.monotonic()
     while True:
-        time.sleep(3)
+        time.sleep(next_wait(started, time.monotonic()))
+        started = time.monotonic()
         call(client, "read_file", {"path": POLL_PATH})
 
 
@@ -175,7 +192,7 @@ def run_model(client: MCPClient, task: str) -> None:
     from strands.models import BedrockModel
 
     def print_tool(event: AfterToolCallEvent) -> None:
-        print(result_line(event.tool_use["name"], event.result, int((event.duration or 0) * 1000)), flush=True)
+        print(result_line(event.tool_use["name"], event.result), flush=True)
 
     model = BedrockModel(model_id=os.environ.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0"),
                          region_name=os.environ.get("AWS_REGION", "us-east-1"),

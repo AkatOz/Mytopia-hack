@@ -43,10 +43,14 @@ def load_tools() -> tuple[list[dict], Callable[[str, dict], dict]]:
         return STUB_TOOLS, stub_run_tool
 
 
+WARM_TOOL = "__warm__"   # not a tool: run_tool answers "unknown tool" and changes nothing
+
+
 class ToolRunner(Protocol):
     definitions: list[dict]
 
     def invoke(self, name: str, arguments: dict) -> dict: ...
+    def warm(self) -> None: ...
 
 
 class LocalTools:
@@ -61,6 +65,9 @@ class LocalTools:
         except Exception as exc:  # noqa: BLE001 - a tool crash is a tool error, not a gateway crash
             return text_result(f"tool {name} failed: {type(exc).__name__}", True)
 
+    def warm(self) -> None:
+        """Nothing to warm in-process."""
+
 
 class LambdaTools:
     """Runs the six tools in the Lambda function; any AWS failure becomes an isError result."""
@@ -71,7 +78,13 @@ class LambdaTools:
         self._client = None
         if session is not None:
             try:
-                self._client = session.client("lambda")
+                from botocore.config import Config
+
+                # invoke is not idempotent (create_issue), so botocore must never retry it on its own;
+                # read_timeout 16 s covers the Lambda's 15 s timeout plus a cold start
+                config = Config(connect_timeout=2, read_timeout=16, tcp_keepalive=True,
+                                retries={"mode": "standard", "total_max_attempts": 1})
+                self._client = session.client("lambda", config=config)
             except Exception as exc:  # noqa: BLE001
                 print(f"tools: Lambda client setup failed: {type(exc).__name__}", file=sys.stderr)
 
@@ -88,3 +101,7 @@ class LambdaTools:
         if response.get("FunctionError") or not isinstance(payload, dict) or "content" not in payload:
             return text_result(f"tool error: Lambda returned {str(payload)[:120]}", True)
         return payload
+
+    def warm(self) -> None:
+        """Invoke the Lambda with a tool name it does not know: no side effect, but the container is now warm."""
+        self.invoke(WARM_TOOL, {})

@@ -2,8 +2,8 @@
 call tools/list and read_file through the gateway, and make one short Bedrock Converse call with the
 short-term bearer token from agent/.env. One line per cycle; Ctrl-C stops it. It never prints a token.
 
-What it warms: the Cognito token endpoint, the gateway's DynamoDB connection, the tools Lambda container
-and the Bedrock route. Its two gateway calls per cycle are real, logged calls (run id run-warm), so the island
+What it warms: the Cognito token endpoint and the Bedrock route. It is optional: the gateway now warms its own
+credentials, JWKS, DynamoDB connection and tools Lambda at startup and keeps them warm (gateway/warm.py). Its two gateway calls per cycle are real, logged calls (run id run-warm), so the island
 shows it: stop warm.py before the demo starts.
 
 The Bedrock call runs with AWS credentials removed from this process (no AWS_ACCESS_KEY_ID & co., no
@@ -137,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"warm: AWS_BEARER_TOKEN_BEDROCK is empty in {args.env_file}; the Bedrock step will fail", flush=True)
     url = (args.gateway_url or cfg.get("GATEWAY_URL") or "http://127.0.0.1:8787").rstrip("/")
     model_id = cfg.get("BEDROCK_MODEL_ID") or "us.amazon.nova-2-lite-v1:0"
+    print("warm: optional now: the gateway warms its credentials, JWKS, DynamoDB connection and Lambda itself "
+          "(startup + every 60 s); this script still warms Cognito and Bedrock", flush=True)
     scrub_aws_env()
     bedrock = bedrock_client(cfg)
     print(f"warm: {args.agent} via {url}, Bedrock {model_id}, "

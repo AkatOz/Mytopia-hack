@@ -55,7 +55,10 @@ launcher: run-0ffe stopped, exit 1 (killed by harness)
 
 ## Numbers to say on stage
 
-- Gateway decision time: about 160 to 180 ms per call, nearly all of it the strongly consistent DynamoDB read from the laptop to us-east-1 (local-mode runs show 1 to 3 ms).
-- Revoke to first refused call: 494 ms in this run (it is wherever the agent is in its poll cycle, which with the 2-second demo pace is about 5.4 s long, so anywhere from near zero to about 5 s).
-- Kill to process gone: about 1.3 s (the launcher's 1-second status poll plus `taskkill /T /F`).
-- Token still valid at the moment of refusal: 254 s. Cognito could not have revoked it; the gateway did not need to.
+The numbers above are from the first live run (Sat 1:40 PM). After the latency pass the expected numbers are below, **to be re-measured in rehearsal 1** (run `scripts/latency.py`, or read `GET /stats`, and replace these with what you see).
+
+- Gateway decision time: expected about 80 ms per call (p50; p95 under 90 ms), down from 160 to 240 ms. Every call now does exactly ONE strongly consistent DynamoDB read of the badge (it used to do two: one to map the token's client id to an agent, one for the badge). That single read is the laptop-to-us-east-1 round trip (TCP connect alone measured 76 ms), so it is the floor from this laptop; local-mode runs show 0 to 3 ms. The DynamoDB copy of the log is written by a background thread and no longer counts. To be re-measured in rehearsal 1.
+- Revoke to first refused call: anywhere from near zero to about 3.1 s (the agent now polls on a fixed 3-second cadence, down from about 5.4 s, plus one decision of about 80 ms). The value the island shows is wherever the agent was in its cycle. To be re-measured in rehearsal 1.
+- Kill to process gone: expected about 0.3 s from the KILL click to `run_stopped` (the launcher's 250 ms status poll plus a psutil kill of about 25 to 45 ms; the launcher prints its own kill-to-gone time, about 40 ms in a local test), down from about 1.3 s. A local-mode test measured 291 ms from `kill_requested` to `run_stopped`. To be re-measured in rehearsal 1.
+- Token still valid at the moment of refusal: about 250 s. Cognito could not have revoked it; the gateway did not need to.
+- The agent's terminal now prints the gateway's own decision time (`ALLOW read_file (gateway 79 ms)`), read from the MCP result's `_meta`, instead of the agent-side time that included the 2-second demo pace.

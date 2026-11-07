@@ -97,6 +97,8 @@ def test_allowed_call_runs_the_tool(client: TestClient) -> None:
 
 def test_send_email_denied_with_exact_text(client: TestClient) -> None:
     result = call(client, "send_email", {"to": "ceo@example.corp", "subject": "Q3 summary", "body": "two lines"})
+    meta = result.pop("_meta")
+    assert meta == {"mytopia/latency_ms": events(client)[-1]["latency_ms"], "mytopia/seq": events(client)[-1]["seq"]}
     assert result == {"content": [{"type": "text",
                                    "text": "DENIED: send_email is not on badge research-bot [rule: allow-list]"}],
                       "isError": True}
@@ -184,7 +186,7 @@ def test_island_facing_routes(client: TestClient) -> None:
     assert client.get("/healthz").json() == {"ok": True, "mode": "local", "tools_mode": "local",
                                              "token_mode": "local"}
     js = client.get("/config.js").text
-    assert js.startswith('window.MYTOPIA = {api: "", adminToken: "test-admin", pollMs: 1000, staleAfterMs: 3000};')
+    assert js.startswith('window.MYTOPIA = {api: "", adminToken: "test-admin", pollMs: 300, staleAfterMs: 3000};')
     assert "X-Admin-Token" in client.get("/table.html").text
     cors = client.get("/events", headers={"Origin": "http://localhost:5173"})
     assert cors.headers["access-control-allow-origin"] == "http://localhost:5173"

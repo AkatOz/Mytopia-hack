@@ -18,12 +18,25 @@ from datetime import datetime
 from pathlib import Path
 
 
+def fetch_all(events_url: str, opener=urllib.request.urlopen) -> dict:
+    """Page through GET /events (at most 200 per page) until a page comes back empty; returns {"events", "chain"}."""
+    events: list[dict] = []
+    chain = None
+    while True:
+        since = events[-1]["seq"] if events else 0
+        with opener(f"{events_url}?since_seq={since}", timeout=10) as resp:
+            page = json.load(resp)
+        chain = chain or page.get("chain")
+        if not page["events"]:
+            return {"events": events, "chain": chain}
+        events.extend(page["events"])
+
+
 def load_events(source: str) -> tuple[list[dict], str]:
     """Return (events, label) from a gateway URL or a JSON file."""
     if source.startswith(("http://", "https://")):
-        url = source.rstrip("/") + "/events?since_seq=0"
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            data = json.load(resp)
+        url = source.rstrip("/") + "/events"
+        data = fetch_all(url)
         label = f"{url} (chain {data.get('chain', '?')})"
     else:
         data = json.loads(Path(source).read_text(encoding="utf-8"))

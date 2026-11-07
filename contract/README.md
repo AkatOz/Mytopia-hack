@@ -57,9 +57,9 @@ HTTP 401, WWW-Authenticate: Bearer error="invalid_token", body {"jsonrpc":"2.0",
 Island-facing (read-only, no auth):
 
 ```text
-GET /events?since_seq=143   -> {"events":[... seq > 143, ascending, at most 200 ...], "server_ts":"..."}
+GET /events?since_seq=143   -> {"events":[... seq > 143, ascending, at most 200 ...], "server_ts":"...", "chain":"chain-..."}
 GET /agents                 -> [{"agent","name","client_id","status","allowed_tools","color"}, ...]
-GET /config.js              -> window.MYTOPIA = {api: "", adminToken: "<token>", pollMs: 1000, staleAfterMs: 3000};
+GET /config.js              -> window.MYTOPIA = {api: "", adminToken: "<token>", pollMs: 300, staleAfterMs: 3000};
 GET /healthz                -> {"ok": true, "mode": "local|aws", "tools_mode": "...", "token_mode": "..."}
 ```
 
@@ -72,10 +72,10 @@ POST /agents/{id}/kill      -> {"status":"KILLED","seq":14}
 POST /runs/{run_id}/started {"agent":"research-bot","task":"Q3 planning","agent_mode":"model","pid":4120,"client_id":"<optional>","expires_in":300} -> the event
 POST /runs/{run_id}/stopped {"exit_code":1,"how":"killed by harness"}                                   -> the event
 POST /demo/reset            -> {"ok":true,"chain":"chain-..."}   both agents ACTIVE, events cleared, new chain
-POST /demo/replay           -> runs the fixed sequence through the real handler as research-bot, agent_mode "replay" (phase 5)
+POST /demo/replay           -> {"ok":false,"recording":"/replay/demo.json","reason":"..."}   the gateway never re-runs a recording; the island plays it (press R, or ?replay=/replay/demo.json)
 ```
 
-Rules the island follows: poll every 1,000 ms with a cursor; LIVE while the last successful poll is under 3,000 ms old, STALE after; REPLAY when playing a file (buttons disabled); a button shows "sent..." until the matching event arrives; never fake an event; never show LIVE for a recording. The gateway allows CORS from `http://localhost:*` and `http://127.0.0.1:*` so the island can run on its own dev server; in the demo the gateway serves the island at `/`.
+Rules the island follows: poll every `pollMs` (300 ms from the gateway's config.js) with a cursor; LIVE while the last successful poll is under 3,000 ms old, STALE after; REPLAY when playing a file (buttons disabled); a button shows "sent..." until the matching event arrives; never fake an event; never show LIVE for a recording. The gateway allows CORS from `http://localhost:*` and `http://127.0.0.1:*` so the island can run on its own dev server; in the demo the gateway serves the island at `/`.
 
 ## The fake world
 

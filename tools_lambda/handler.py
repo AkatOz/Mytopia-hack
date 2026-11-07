@@ -28,7 +28,10 @@ SEED_ISSUES: list[dict] = [
     {"number": 2, "title": "Update onboarding docs", "body": "Docs still mention the old signup flow."},
 ]
 
-ISSUES: list[dict] = [dict(issue) for issue in SEED_ISSUES]  # the in-memory list create_issue appends to
+# The in-memory list create_issue appends to. It lives as long as this process (a warm Lambda container keeps it
+# for minutes, across /demo/reset), so issue numbers keep counting up within one container: "issue #5 created" is
+# true for this container's tracker. Nothing resets it on purpose: a reset hook would be a hidden seventh tool.
+ISSUES: list[dict] = [dict(issue) for issue in SEED_ISSUES]
 
 
 def _schema(props: dict[str, str]) -> dict:

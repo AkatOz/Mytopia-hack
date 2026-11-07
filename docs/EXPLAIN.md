@@ -72,7 +72,7 @@ Judge: "Why is a denied tool a normal 200 answer and not an error?" Answer: "Tha
 ### gateway/registry.py
 What it is: the badge store. `MemoryRegistry` is a dict for local mode. `DynamoRegistry` reads and updates `mytopia_agents`.
 Point at: `DynamoRegistry.get`: `get_item(Key={"agent": ...}, ConsistentRead=True)`. Any AWS error raises `RegistryUnavailable`, and the caller denies with rule `registry-unavailable` (fail closed).
-Judge: "How many database reads per call, and why no scan?" Answer: "For research-bot, two strongly consistent `GetItem`s. `by_client_id` maps the token's client id to an agent by reading the two known agent ids in turn (research-bot is found first). Then `get` reads the badge. The role has no `Scan` permission, which is why `by_client_id` reads the known ids directly. Those reads are most of the 160 to 180 ms per decision we measured from the laptop to us-east-1 (docs/LIVE_RUN.md)."
+Judge: "How many database reads per call, and why no scan?" Answer: "Exactly one strongly consistent `GetItem` per decided call, for every agent. The gateway keeps a small map from client id to agent id in memory (built from the two rows at startup). That map only says which badge row to read; the row itself is read fresh on every call and must still name the token's client id. Two refusals need no read at all, because the badge cannot change them: an `Mcp-Name` header that does not match the tool, and a tool name outside the six. If a call ever arrives before the map is built, the gateway rebuilds it first (the two known rows, read directly because the role has no `Scan` permission), so that one call does three reads. That one read is the laptop-to-us-east-1 round trip, about 80 ms; the first live run did two reads and measured 160 to 180 ms (docs/LIVE_RUN.md)."
 
 ### gateway/tokens.py
 What it is: bearer-token checks. `CognitoVerifier` checks Cognito RS256 tokens against the pool's JWKS. `LocalVerifier` checks HS256 tokens from `issuer_local.py`. Both finish in `check_claims`.
@@ -118,7 +118,7 @@ Judge: "Why offer the model tools that are not on its badge?" Answer: "To prove 
 
 ### launcher/run.py
 What it is: the harness. It mints the agent's Cognito token (unsigned `GetClientToken` with the client id and secret from `agent/.env`), starts `agent/main.py` with a scrubbed environment, and owns that process. It reports `run_started` and `run_stopped`, rewrites the token file before each expiry (every 240 s for a 300 s token), and kills the process tree when the badge reads KILLED.
-Point at: `own_run` (the loop: poll status every `HARNESS_POLL_MS`=1000 ms, `kill_tree` on KILLED, rotate when due), and `child_env`, which builds the agent's whole environment from an allow-list.
+Point at: `own_run` (the loop: poll status every `HARNESS_POLL_MS`=250 ms, `kill_tree` on KILLED, rotate when due), and `child_env`, which builds the agent's whole environment from an allow-list.
 Judge: "How do you know the agent holds no AWS keys?" Answer: "`child_env` does not copy the parent's environment. It builds one from scratch: the OS basics, the token and token-file path, run id, agent id, gateway URL, task file, the Bedrock bearer token, model id and region. `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` point at an empty file. `tests/test_launcher.py` asserts the child's environment is a subset of that list. Honest limit: the agent runs as the same OS user, so it could read files on disk. In production it runs on a separate host."
 
 ### launcher/local_token.py
@@ -246,7 +246,7 @@ Before the checks, the header must read `Bearer <a>.<b>.<c>`. Otherwise the answ
 2. **Issuer.** `iss` must equal `https://cognito-idp.us-east-1.amazonaws.com/<pool id>`.
 3. **Expiry.** `exp` must be in the future (`exp` and `iat` are required).
 4. **Kind and scope.** `token_use` must be `access`, and `scope` must contain `mytopia/tools` (`check_claims`).
-5. **Identity.** `sub` must equal `client_id`, and `client_id` must belong to a registered badge (`registry.by_client_id`).
+5. **Identity.** `sub` must equal `client_id`, and `client_id` must belong to a registered badge (the in-memory client map in `mcp.py`, then the fresh badge row must name the same client id).
 
 Any failure returns HTTP 401 with `WWW-Authenticate: Bearer error="invalid_token"` and logs a `deny` with rule `token`. One exception: if DynamoDB cannot be read during check 5, the call is denied with rule `registry-unavailable` (fail closed) instead of a 401. Only after all five does `decide()` look at the badge: status, then allow-list. That is why a revoked agent with a perfectly valid token is still refused. In the live run the token had 254 s left.
 
@@ -267,7 +267,7 @@ Cognito cannot revoke a machine-to-machine access token. A client-credentials to
 ## How the launcher kills
 
 1. The operator clicks KILL. `POST /agents/research-bot/kill` sets `status=KILLED` and logs `kill_requested`. From that moment the gateway refuses everything for that agent, `tools/list` included. This is the soft stop.
-2. The launcher polls `GET /agents/research-bot/status` (with `X-Admin-Token`) every 1000 ms. When it reads KILLED, it runs `taskkill /PID <pid> /T /F`. `/T` kills the whole tree, which matters because the venv's `python.exe` is a stub with a child process. If taskkill fails, it falls back to `psutil`. This is the hard stop.
+2. The launcher polls `GET /agents/research-bot/status` (with `X-Admin-Token`) every 250 ms. When it reads KILLED, it kills the whole tree with `psutil` (children first, then the parent, in about 25 ms), which matters because the venv's `python.exe` is a stub with a child process. If anything survives 2 s, `taskkill /PID <pid> /T /F` gets a second pass. This is the hard stop.
 3. It waits for the process and posts `/runs/<run_id>/stopped` with the real exit code (`proc.returncode`, 1 in the live run) and `how: "killed by harness"`.
 4. The island draws fire only on that `run_stopped` event, never on the click. Live run: taskkill took 534 ms, and the island read "run stopped 1274 ms after KILL" (docs/LIVE_RUN.md).
 

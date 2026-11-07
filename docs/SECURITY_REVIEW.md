@@ -44,9 +44,9 @@ Tests added in `tests/test_security.py`: the `tools/list` name refused, the 413 
 
 ## Not fixed (small, written down)
 
-- `launcher/run.py`: if `taskkill` and psutil both fail, `proc.wait(timeout=15)` raises and the launcher exits without posting `run_stopped`. The badge is already KILLED by then, so the gateway still refuses every call.
+- Fixed since: `launcher/run.py` now posts `run_stopped` on every path. A psutil error (such as `AccessDenied`) falls through to `taskkill /T /F`, a child still exiting after 15 s is reported as "still exiting" instead of raising, and a kill that was only slow is neither repeated nor relabelled. The badge is KILLED either way, so the gateway refuses every call.
 - `launcher/run.py`: if the gateway does not answer the status poll, the launcher does not kill the agent. Its tool calls fail anyway, because the gateway is the thing not answering. The agent can still reach Bedrock.
-- `POST /runs/{id}/started` returns 500 when `expires_in` is not a number. This route needs the admin token.
+- Fixed since: `POST /runs/{id}/started` returns 400 when `expires_in` is not a number, and stores `agent_mode` as a string, so a bad body can no longer break the DynamoDB copy of the log. This route needs the admin token.
 - `infra/provision.py` grants the gateway role `dynamodb:UpdateItem` on the agents table. It needs that for revoke, restore and kill, but it means the role could also change `allowed_tools`.
 
 ## Known limits (plain words a teammate can read to a judge)

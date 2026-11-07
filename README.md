@@ -25,7 +25,7 @@ Prompt 1 asks for four steps. We add two more, a blocked disallowed action and a
 | Borrowed: block a disallowed action | Same `decide`, rule `allow-list`. The model was offered `send_email` from a stale local catalog. | `gateway/decide.py` `decide`; `agent/main.py` `catalog_tools` | seq 6 `deny send_email ... allow-list`, 162 ms |
 | 3. Revoke access mid-task | Island button POSTs to the gateway, which runs DynamoDB `UpdateItem` on the badge row (`status=REVOKED`) | `island/src/main.js` `press`; `gateway/app.py` `admin_action`; `gateway/registry.py` `DynamoRegistry.set_status` | seq 11 `revoked ... (REVOKE clicked on the island)` |
 | 4. Block subsequent requests | Every call does a strongly consistent badge read, then `decide` returns `status-revoked` | `gateway/registry.py` `DynamoRegistry.get` (`ConsistentRead=True`); `gateway/decide.py` `decide` | seq 12 `deny read_file status-revoked`, **494** ms since revoke, `expires in 254 s`; seq 13, 14 |
-| Borrowed: stop the run | KILL sets `status=KILLED` (soft stop at the gateway). The launcher sees it within one 1-second poll and kills the process tree (hard stop). | `gateway/app.py` `admin_action`; `launcher/run.py` `own_run`, `kill_tree` | seq 15 `kill_requested`, seq 16 `run_stopped exit 1 (killed by harness)`; terminal `launcher: KILLED -> taskkill in 534 ms` |
+| Borrowed: stop the run | KILL sets `status=KILLED` (soft stop at the gateway). The launcher sees it within one 250 ms status poll and kills the process tree with psutil (hard stop). | `gateway/app.py` `admin_action`; `launcher/run.py` `own_run`, `kill_tree` | seq 15 `kill_requested`, seq 16 `run_stopped exit 1 (killed by harness)`; terminal `launcher: KILLED -> taskkill in 534 ms` (first live run, before the switch to psutil) |
 
 ## Architecture
 
@@ -44,7 +44,7 @@ Prompt 1 asks for four steps. We add two more, a blocked disallowed action and a
     |  POST /runs/{id}/started|stopped,                  |
     |  GET /agents/{id}/status (every 1 s)               |
   LAUNCHER launcher/run.py  -- spawns with a scrubbed environment, rewrites the token file
-    holds: Cognito client secret, admin token  every 240 s, taskkill /PID <pid> /T /F on KILLED --> agent
+    holds: Cognito client secret, admin token  every 240 s, psutil kill of the tree on KILLED --> agent
 =====================================================================================================
  AWS us-east-1 (event account)
   Cognito pool "mytopia" <-- GetClientToken (unsigned call: client id + secret) ------- launcher
@@ -128,7 +128,7 @@ Delete everything afterwards with `.venv\Scripts\python infra\teardown.py --yes`
 
 This serves the whole repo folder, git-ignored `.env` files included, so keep `--bind 127.0.0.1` and stop the server when done.
 
-Pressing **R** on the island plays `island/fixture.json` instead: the contract's 21 example events, not a live run. `POST /demo/replay` on the gateway is not built (it answers 501).
+Pressing **R** on the island plays `island/fixture.json` instead: the contract's 21 example events, not a live run. `POST /demo/replay` on the gateway does not re-run anything; it answers with a pointer to `/replay/demo.json`, which the island plays with `?replay=/replay/demo.json`.
 
 ## Demo script
 
@@ -159,7 +159,7 @@ Limits, stated plainly:
 Next:
 - Amazon Bedrock AgentCore Gateway with Policy as the managed path for the same checks.
 - Task-scoped badges with an expiry, so access ends with the task even if nobody clicks.
-- DynamoDB Streams and a WebSocket in place of the island's and the launcher's 1-second polling.
+- DynamoDB Streams and a WebSocket in place of the island's 300 ms and the launcher's 250 ms polling.
 - Sender-constrained tokens, so a copied token is useless on another machine.
 - A separate sandbox host for the agent.
 

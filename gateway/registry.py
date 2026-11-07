@@ -15,7 +15,6 @@ class RegistryUnavailable(Exception):
 
 class Registry(Protocol):
     def get(self, agent_id: str) -> dict | None: ...
-    def by_client_id(self, client_id: str) -> dict | None: ...
     def set_status(self, agent_id: str, status: str, by: str) -> dict: ...
     def list_agents(self) -> list[dict]: ...
     def reset(self) -> None: ...
@@ -51,6 +50,19 @@ def status_fields(status: str, by: str) -> dict:
     return fields
 
 
+def dynamo_client(session: Any) -> Any:
+    """A low-level DynamoDB client with short timeouts: a slow network must fail closed fast, not hang a call.
+    The low-level client is documented thread-safe (the resource Table is not), and the requests run in a thread pool.
+    total_max_attempts 2: one retry after a timeout, throttle or dropped keep-alive connection, so a single network blip
+    does not deny a demo call. Still at most one successful read per call; the worst case before failing closed is
+    about 6 s (connect 1 s + read 2 s, twice)."""
+    from botocore.config import Config  # imported here so local mode never touches botocore
+
+    config = Config(connect_timeout=1, read_timeout=2, tcp_keepalive=True,
+                    retries={"mode": "standard", "total_max_attempts": 2})
+    return session.client("dynamodb", config=config)
+
+
 class MemoryRegistry:
     """Badge rows in a dict, seeded with the local client ids."""
 
@@ -62,13 +74,6 @@ class MemoryRegistry:
         with self._lock:
             row = self._rows.get(agent_id)
             return dict(row) if row else None
-
-    def by_client_id(self, client_id: str) -> dict | None:
-        for agent_id in KNOWN_AGENTS:
-            row = self.get(agent_id)
-            if row and row["client_id"] == client_id:
-                return row
-        return None
 
     def set_status(self, agent_id: str, status: str, by: str) -> dict:
         with self._lock:
@@ -89,53 +94,48 @@ class DynamoRegistry:
     """Badge rows in DynamoDB table mytopia_agents (partition key agent); never caches a row."""
 
     def __init__(self, table_name: str, session: Any) -> None:
+        from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
+
         self.table_name = table_name
+        self._to_python = TypeDeserializer().deserialize
+        self._to_dynamo = TypeSerializer().serialize
         self._client = None
         if session is not None:
             try:
-                self._client = session.resource("dynamodb").Table(table_name)
+                self._client = dynamo_client(session)
             except Exception as exc:  # noqa: BLE001 - any setup failure means fail closed later
                 print(f"registry setup failed: {type(exc).__name__}", file=sys.stderr)
 
-    def _table(self) -> Any:
+    def _call(self, operation: str, **kwargs: Any) -> dict:
+        """Run one DynamoDB operation; every failure becomes RegistryUnavailable (fail closed)."""
         if self._client is None:
             raise RegistryUnavailable("no AWS session for the registry")
-        return self._client
-
-    def get(self, agent_id: str) -> dict | None:
         try:
-            item = self._table().get_item(Key={"agent": agent_id}, ConsistentRead=True).get("Item")
-        except RegistryUnavailable:
-            raise
+            return getattr(self._client, operation)(TableName=self.table_name, **kwargs)
         except Exception as exc:  # noqa: BLE001 - every AWS error fails closed
             raise RegistryUnavailable(type(exc).__name__) from exc
-        return dict(item) if item else None
 
-    def by_client_id(self, client_id: str) -> dict | None:
-        for agent_id in KNOWN_AGENTS:
-            row = self.get(agent_id)
-            if row and row.get("client_id") == client_id:
-                return row
-        return None
+    def _row(self, item: dict | None) -> dict | None:
+        return {k: self._to_python(v) for k, v in item.items()} if item else None
+
+    def get(self, agent_id: str) -> dict | None:
+        """The badge as DynamoDB has it right now: a strongly consistent GetItem, every time."""
+        response = self._call("get_item", Key={"agent": {"S": agent_id}}, ConsistentRead=True)
+        return self._row(response.get("Item"))
 
     def set_status(self, agent_id: str, status: str, by: str) -> dict:
         fields = status_fields(status, by)
         names = {f"#{k}": k for k in fields}
         names["#agent"] = "agent"  # "agent" and "status" are DynamoDB reserved words: always alias them
-        values = {f":{k}": v for k, v in fields.items()}
+        values = {f":{k}": self._to_dynamo(v) for k, v in fields.items()}
         update = "SET " + ", ".join(f"#{k} = :{k}" for k in fields)
-        try:
-            result = self._table().update_item(
-                Key={"agent": agent_id}, UpdateExpression=update, ExpressionAttributeNames=names,
-                ExpressionAttributeValues=values, ConditionExpression="attribute_exists(#agent)",
-                ReturnValues="ALL_NEW")
-        except RegistryUnavailable:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            raise RegistryUnavailable(type(exc).__name__) from exc
-        return dict(result["Attributes"])
+        response = self._call("update_item", Key={"agent": {"S": agent_id}}, UpdateExpression=update,
+                              ExpressionAttributeNames=names, ExpressionAttributeValues=values,
+                              ConditionExpression="attribute_exists(#agent)", ReturnValues="ALL_NEW")
+        return self._row(response["Attributes"]) or {}
 
     def list_agents(self) -> list[dict]:
+        # the gateway role has no Scan permission, so read the known ids one by one
         return [row for row in (self.get(a) for a in KNOWN_AGENTS) if row]
 
     def reset(self) -> None:

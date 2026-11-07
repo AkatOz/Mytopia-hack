@@ -1,7 +1,8 @@
 """Tests for gateway/events.py: the hash chain, the since() cursor, reset() and the JSONL twin.
-Only the in-memory log is exercised here; the DynamoDB copy is checked with a fake table that fails."""
+The DynamoDB copy is checked with a fake low-level client: written off the request path, in seq order, retried, never blocking."""
 
 import json
+import time
 from pathlib import Path
 
 from gateway.events import DynamoEventLog, MemoryEventLog, record_hash, verify_chain
@@ -79,24 +80,74 @@ def test_jsonl_twin(tmp_path: Path) -> None:
     assert lines[0]["pk"] == log.chain
 
 
-class FailingTable:
+class FakeDynamo:
+    """Stands in for session.client('dynamodb'): records put_item calls, optionally failing the first few."""
+
+    def __init__(self, fail_first: int = 0, delay_s: float = 0.0) -> None:
+        self.items: list[dict] = []
+        self.calls = 0
+        self.fail_first = fail_first
+        self.delay_s = delay_s
+
     def put_item(self, **kwargs: object) -> None:
-        raise RuntimeError("AccessDenied")
+        self.calls += 1
+        time.sleep(self.delay_s)
+        if self.calls <= self.fail_first:
+            raise RuntimeError("ProvisionedThroughputExceeded")
+        assert kwargs["ConditionExpression"] == "attribute_not_exists(seq)"
+        self.items.append(kwargs["Item"])  # type: ignore[arg-type]
 
 
-class FailingSession:
-    def resource(self, name: str) -> "FailingSession":
-        return self
+class FakeSession:
+    def __init__(self, dynamo: FakeDynamo) -> None:
+        self.dynamo = dynamo
 
-    def Table(self, name: str) -> FailingTable:  # noqa: N802 - mirrors boto3
-        return FailingTable()
+    def client(self, name: str, config: object = None) -> FakeDynamo:
+        assert name == "dynamodb" and config is not None  # always the short-timeout config
+        return self.dynamo
 
 
-def test_dynamo_failure_never_blocks() -> None:
-    log = DynamoEventLog("mytopia_events", FailingSession())
+def test_dynamo_failure_never_blocks(monkeypatch: object) -> None:
+    import gateway.events as events_module
+    monkeypatch.setattr(events_module, "RETRY_BACKOFF_S", 0.001)  # type: ignore[attr-defined]
+    dynamo = FakeDynamo(fail_first=99)
+    log = DynamoEventLog("mytopia_events", FakeSession(dynamo))
     record = log.append(decision="allow", rule="allow-list")
     assert record["seq"] == 1 and log.since(0)[0]["hash"] == record["hash"]
+    assert log.flush(5) and dynamo.calls == 4  # one try plus three retries, then given up (printed once)
     assert DynamoEventLog("mytopia_events", None).append(decision="allow")["seq"] == 1
+
+
+def test_durable_copy_is_written_off_the_request_path_in_seq_order() -> None:
+    dynamo = FakeDynamo(fail_first=1, delay_s=0.05)  # 50 ms per PutItem, the first one fails once
+    log = DynamoEventLog("mytopia_events", FakeSession(dynamo))
+    t0 = time.perf_counter()
+    fill(log, 5)
+    assert time.perf_counter() - t0 < 0.05  # five appends returned before even one PutItem finished
+    assert log.flush(10)
+    assert [int(item["seq"]["N"]) for item in dynamo.items] == [1, 2, 3, 4, 5]
+    first = dynamo.items[0]
+    assert first["pk"] == {"S": log.chain} and first["ms_since_revoke"] == {"NULL": True}
+    assert first["hash"] == {"S": log.all()[0]["hash"]}
+
+
+def test_one_unstorable_record_does_not_stop_the_writer() -> None:
+    dynamo = FakeDynamo()
+    log = DynamoEventLog("mytopia_events", FakeSession(dynamo))
+    log.append(decision="run_started", agent_mode=1.5)  # TypeSerializer refuses a float: this record cannot be copied
+    log.append(decision="allow", rule="allow-list")
+    assert log.flush(5)
+    assert [int(item["seq"]["N"]) for item in dynamo.items] == [2]  # the writer lived on and copied the next record
+
+
+def test_restart_after_reset_does_not_resume_the_old_chain(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    log = MemoryEventLog(path)
+    fill(log, 3)
+    new_chain = log.reset()
+    again = MemoryEventLog(path)  # restart with no event since the reset
+    assert again.chain == new_chain and again.all() == []
+    assert again.append(decision="allow")["prev_hash"] == "genesis"
 
 
 def test_restart_resumes_the_last_chain(tmp_path: Path) -> None:
