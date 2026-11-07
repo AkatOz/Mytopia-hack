@@ -209,10 +209,12 @@ class McpHandler:
             result = await run_in_threadpool(self.tools.invoke, name, arguments)
         else:
             result = denied_result(decision)
-        await asyncio.sleep(self.settings.demo_pace)
         await run_in_threadpool(
             self.log, run_id=run_id, agent=token.agent_id, agent_mode=self.agent_mode(run_id),
             tool=name if name in TOOL_NAMES else "tools/list",  # an unknown tool is a gatehouse deny (closed tool set)
             args_summary=args_summary(arguments), decision="allow" if decision.ok else "deny", rule=decision.rule,
             reason=decision.reason, latency_ms=latency)
+        # The event is logged before the demo pace, so the island sees the decision the moment it is made
+        # and a kill can never land between a decision and its record.
+        await asyncio.sleep(self.settings.demo_pace)
         return rpc_result(msg_id, result)

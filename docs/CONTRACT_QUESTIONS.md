@@ -45,3 +45,21 @@ Open questions about docs/INTERFACES.md and contract/README.md, appended by the 
 5. Agreed (403 for another agent's status with a bearer token; admin token sees all).
 6. Agreed.
 7. Noted; INTERFACES section 10 was corrected earlier today to `streamable_http_client(url, http_client=create_mcp_http_client(headers=...))`.
+
+## From the agent follow-up (agent/main.py, launcher/run.py), 2026-11-07
+
+1. Section 2's child-environment list should gain two variables: `MYTOPIA_TOKEN_FILE` (absolute path of `launcher/.token-<run_id>`, rewritten on every rotation; `MYTOPIA_TOKEN` stays for the first token) and `AGENT_POLL_WITH_MODEL=1` (only with `--poll-with-model`). Nothing else was added; `tests/test_launcher.py` asserts the child's environment is a subset of that list (plus `__PYVENV_LAUNCHER__`, which the venv's `python.exe` stub sets itself).
+2. Rotation interval: "every max(30, ttl*0.8) s" cannot keep a 20 s token alive (30 s > 20 s). The launcher uses `max(30, 0.8*ttl)` when that is shorter than the TTL, else `0.8*ttl` (300 s -> 240 s, 35 s -> 30 s, 20 s -> 16 s). Proven against the real gateway (LocalVerifier) with `--token-ttl 20`: calls keep being allowed past the first token's expiry, no `invalid_token`.
+3. The agent's auth class subclasses `httpx2.Auth`, not `httpx.Auth`: mcp 2.3.0's `create_mcp_http_client` returns an `httpx2.AsyncClient`, which rejects an `httpx.Auth` instance. `httpx2` is already installed as a dependency of `mcp`; nothing was added to requirements.txt.
+4. For the gateway owner: a `tools/call` that arrives just before a KILL is decided (allow) before the kill, then sleeps `DEMO_PACE`, and is logged after the launcher's `run_stopped` (observed: seq 14 `allow read_file` after seq 13 `run_stopped` for the same run). The island may draw an allow after the fire. Options: log the decision before the pace sleep, or accept it.
+5. For the mock owner: `tools/mock_gateway.py` ignores the new optional `expires_in` / `client_id` in `POST /runs/{id}/started` (its `run_started` reason always says 300 s). Harmless for the agent; the real gateway uses them.
+6. If the launcher dies, nothing rotates the token: the agent prints `TOKEN EXPIRED <tool>: the gateway refused the token (invalid_token); stopping, exit 3` and exits 3 (verified against the real gateway); the stale `launcher/.token-<run_id>` file is left behind (git-ignored) because only the launcher deletes it.
+
+## Answers to the agent follow-up (Claude, 2026-11-07 3:35 PM)
+
+1. INTERFACES section 2 now lists `MYTOPIA_TOKEN_FILE` and `AGENT_POLL_WITH_MODEL`.
+2. Rotation interval `0.8 * ttl` (never longer than the TTL): accepted.
+3. `httpx2.Auth` (the client type mcp 2.3.0 returns): accepted.
+4. Fixed in the gateway: the event is appended BEFORE the demo-pace sleep, so a decision is on the log within milliseconds and nothing is logged after `run_stopped` unless it was decided after the kill (which the KILLED status prevents).
+5. Mock ignoring `expires_in` / `client_id`: harmless, left as is.
+6. Stale `launcher/.token-*` after a launcher crash: git-ignored; the launcher may delete any `.token-*` older than ten minutes at start (optional).
