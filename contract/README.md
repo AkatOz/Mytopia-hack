@@ -69,7 +69,7 @@ Operator-facing (`X-Admin-Token` required):
 POST /agents/{id}/revoke    -> {"status":"REVOKED","seq":9}
 POST /agents/{id}/restore   -> {"status":"ACTIVE","seq":17}
 POST /agents/{id}/kill      -> {"status":"KILLED","seq":14}
-POST /runs/{run_id}/started {"agent":"research-bot","task":"Q3 planning","agent_mode":"model","pid":4120} -> the event
+POST /runs/{run_id}/started {"agent":"research-bot","task":"Q3 planning","agent_mode":"model","pid":4120,"client_id":"<optional>","expires_in":300} -> the event
 POST /runs/{run_id}/stopped {"exit_code":1,"how":"killed by harness"}                                   -> the event
 POST /demo/reset            -> {"ok":true,"chain":"chain-..."}   both agents ACTIVE, events cleared, new chain
 POST /demo/replay           -> runs the fixed sequence through the real handler as research-bot, agent_mode "replay" (phase 5)
