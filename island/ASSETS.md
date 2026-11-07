@@ -26,7 +26,7 @@ The hackathon rules require the team to say exactly what was built during the ev
 ## New this weekend (Nov 7-8, 2026)
 
 - `src/reducer.js`: the pure `apply(state, event)`, the badge rule, dedupe and ordering, the tool-to-building map.
-- `tests/reducer.test.mjs`: 10 tests that run the 21-event fixture through the reducer.
+- `tests/reducer.test.mjs`: 12 tests that run the 21-event fixture through the reducer.
 - `src/main.js`: live polling with a cursor, replay at 1.5 s per event, the effects queue (at most three at once), the four buttons that only POST, the T table, R replay, robot click → raw JSON, and the overlays (name tags, speech bubbles, stamps, building labels, BLOCKED count).
 - `src/scene.js` (new parts): the island layout, **the gatehouse** (lodges, arch, striped barrier that lifts for allowed calls, OFF LIMITS velvet-rope pen, BLOCKED bin that fills with red packets), the mailbox, the chest **plates** (grey, green, red, amber, dark with eyes out), roof **lamps**, green and red **sparks** with the fizzle at the barrier, the two-rung **smoke** plus **fire**, and robot **walking**.
 - Stage B, `src/scene.js` + `src/main.js`: the gatehouse **ledger room** (cutaway walls, chalkboard and hash-chain canvases drawn from the log, the clerk robot that stamps each row, the iris wipe; the cutaway-room and iris *ideas* come from Mytopia's interiors, the code is new), falling packets in the BLOCKED bin, and the **Save replay** download.
