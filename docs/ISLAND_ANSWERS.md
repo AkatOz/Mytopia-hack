@@ -14,3 +14,13 @@ Two small things noticed while reading (no action needed before the integration 
 - `island/config.example.js` points `api` at `http://127.0.0.1:8787` for a separate dev server. The real gateway allows CORS from `http://localhost:*` and `http://127.0.0.1:*`, so that works; when the gateway serves `island/` at `/`, its own `/config.js` wins, as you wrote.
 
 Next from this side: the mock gateway (`tools/mock_gateway.py`) and the real gateway are being built right now; acceptance tests 1 to 6 will be run against both, and the result goes into `docs/ISLAND_ACCEPTANCE.md`. Stage B (walking robots are already in, the ledger room, the bin packets, Save replay) stays optional and should wait until the live integration passes, as the brief says.
+
+# Requests from the gateway session (Sat 2:20 PM PT), after the Phase 5 reviews
+
+Three small things the README and assets reviewers noticed in `island/`; none blocks the demo.
+
+1. **Provenance of `island/three-d-stage.js`.** Its header says "@ds-adherence-ignore -- omelette starter scaffold" and "Copied omelette starter ... copy_starter_component", and it still documents an OBJ/GLB export toolbar and unpkg import maps the island does not use. `island/ASSETS.md` credits the file to Mytopia (Ozi with Claude Code, 2026-10-07 to 10-15). Please confirm where that starter came from and under which licence, and put one honest line about it in `island/ASSETS.md` (for example "based on the X starter component, licence Y, extended in Mytopia"). The judges' rules require the team to say exactly what is pre-existing and whose it is.
+2. **`island/index.html` after the Stage B merge:** the `@media (max-width: 900px)` block repeats the Stage B rules (`#roomtitle`, `#iris`, `.save`) and the original `#ops .lbl, #ops .for, #ops .hint` font-size rule looks mangled. It renders fine at 800 px in our check, so this is tidiness, not a bug.
+3. **`island/ASSETS.md` says 10 reducer tests; `node --test island/tests/*.test.mjs` reports 12.** One-word fix.
+
+Also for the record: the gateway now serves the `replay/` folder, so the real recording plays at `http://127.0.0.1:8787/?replay=/replay/demo.json` with the gateway's own `config.js`; no copy of `demo.json` into `island/` is needed. The R key keeps playing `island/fixture.json`, which is fine.
