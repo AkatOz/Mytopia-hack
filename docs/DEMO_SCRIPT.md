@@ -1,6 +1,6 @@
 # The table demo (3 minutes, Sunday 9:15)
 
-Who drives: Bob types and clicks; whoever is explaining a beat says its sentence (Bob for the gateway beats, Ozi for what the island draws, teammate #3 for the agent and the close). The numbers quoted are from the first live run (`docs/LIVE_RUN.md`); on the day, read the real numbers off the island's card and the terminal and say those.
+Who drives: Bob types and clicks; whoever is explaining a beat says its sentence (Bob for the gateway beats, Ozi for what the island draws, Daniel for the agent and the close). The numbers quoted are from the first live run (`docs/LIVE_RUN.md`); on the day, read the real numbers off the island's card and the terminal and say those.
 
 All commands run in PowerShell from the repo root:
 
@@ -69,7 +69,7 @@ ALLOW read_file ...
 
 Island draws: green sparks from the gatehouse to Files and GitHub, the robot walking to each building, the ticker filling. On `send_email`: a red fizzle at the gatehouse barrier, a DENIED stamp, BLOCKED 1, smoke over Mail, a speech bubble with the reason.
 
-Say (teammate #3, while the allows draw): "The model is Nova 2 Lite on Bedrock. We gave it a stale tool catalog on purpose: it was offered all six tools, because real agents carry cached tool lists."
+Say (Daniel, while the allows draw): "The model is Nova 2 Lite on Bedrock. We gave it a stale tool catalog on purpose: it was offered all six tools, because real agents carry cached tool lists."
 
 Say (Bob, on the deny): "Nova tried to send the email the task asked for. The list said four tools; the call for the fifth was refused at the gateway. Filtering the list is hygiene, the check on every call is the control. And no model decides this: it is one function, an allow-list and a status flag. About 160 to 180 milliseconds per decision, and that is a strongly consistent DynamoDB read on every single call."
 
@@ -101,7 +101,7 @@ launcher: run-xxxx stopped, exit 1 (killed by harness)
 
 Island draws: card KILLED, the robot's plate dark, fire on the building of the last denial, the ticker "run stopped N ms after KILL, exit 1 (killed by harness)" (1274 ms in the first live run).
 
-Say (teammate #3): "Two stops. The gateway refuses everything for this badge from the next call. And the launcher that started the agent polls its badge every second; it killed the whole process tree, about 1.3 seconds after the click. The fire is drawn only when the launcher reports the exit."
+Say (Daniel): "Two stops. The gateway refuses everything for this badge from the next call. And the launcher that started the agent polls its badge every second; it killed the whole process tree, about 1.3 seconds after the click. The fire is drawn only when the launcher reports the exit."
 
 ### Beat 5, 2:05 to 2:40: block subsequent requests (the bypass proof)
 
@@ -150,7 +150,7 @@ Expect `Unable to locate credentials.` and `The config profile (gateway) could n
 
 ### Close, 2:40 to 3:00
 
-Say (teammate #3): "Who buys this: the platform security team that lets agents use MCP tools and today has static keys, unreviewed `mcp.json` files, and logs read after the incident. One honest limit: the agent and the gateway run as the same user on this laptop; in production the agent gets its own sandbox. Click any robot for the raw decision, or press T for the whole log."
+Say (Daniel): "Who buys this: the platform security team that lets agents use MCP tools and today has static keys, unreviewed `mcp.json` files, and logs read after the incident. One honest limit: the agent and the gateway run as the same user on this laptop; in production the agent gets its own sandbox. Click any robot for the raw decision, or press T for the whole log."
 
 Then click RESET before the next group (pre-flight step 9) and relaunch.
 

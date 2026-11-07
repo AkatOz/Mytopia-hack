@@ -219,7 +219,7 @@ Each teammate explains their own part for two minutes with no laptop, then takes
 7. What is mine from before: `three-d-stage.js` (byte-identical: orthographic camera, half-resolution render, ink-outline shader) and the building, robot, tree and terrain recipes in `src/scene.js`, from Mytopia (Oct 7 to 20). New this weekend: the reducer, gatehouse, plates, sparks, smoke, HUD, polling, replay, tests. Licences: three.js MIT, fonts SIL OFL 1.1, all vendored, so the page makes no request off the laptop.
 8. Tests: `node --test island/tests/*.test.mjs`, 12 passing, the fixture run through the reducer.
 
-### Teammate #3: the agent, the launcher and the business plan (two minutes)
+### Daniel: the agent, the launcher and the business plan (two minutes)
 
 1. The launcher (`launcher/run.py`) reads `agent/.env`, mints a Cognito token with the unsigned `GetClientToken` call, prints only the first 8 characters of the client id, writes the token to a file and starts `agent/main.py` with a scrubbed environment: token, token file path, run id, the Bedrock token, model id, region, and Windows basics; AWS config files point at an empty file.
 2. It posts `run_started`, polls the badge status every second, rotates the token every 240 s, and on KILLED runs `taskkill /T /F` on the tree and posts `run_stopped` with the real exit code (1 in the live run).

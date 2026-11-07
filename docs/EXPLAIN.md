@@ -105,7 +105,7 @@ Judge: "What is in the planning file the agent reads?" Answer: "Three action ite
 
 ---
 
-## agent/ (teammate #3)
+## agent/ (Daniel)
 
 ### agent/main.py
 What it is: the agent, Strands Agents on Bedrock Nova 2 Lite (`us.amazon.nova-2-lite-v1:0`, temperature 0). Its only tools go through the gateway's `/mcp`. It reads only its own environment, runs the task from `tasks/q3.json`, then reads the planning file every 3 s in code until killed. `AGENT_MODE=scripted` makes the same calls with no model.
@@ -114,7 +114,7 @@ Judge: "Why offer the model tools that are not on its badge?" Answer: "To prove 
 
 ---
 
-## launcher/ (teammate #3)
+## launcher/ (Daniel)
 
 ### launcher/run.py
 What it is: the harness. It mints the agent's Cognito token (unsigned `GetClientToken` with the client id and secret from `agent/.env`), starts `agent/main.py` with a scrubbed environment, and owns that process. It reports `run_started` and `run_stopped`, rewrites the token file before each expiry (every 240 s for a 300 s token), and kills the process tree when the badge reads KILLED.
@@ -234,7 +234,7 @@ Also in `island/`: `config.example.js` (copy to `config.js` for local developmen
 
 - **Bob**: the gateway (`gateway/`), tokens, the badge, the log, and AWS (`infra/`, `scripts/`, `tools_lambda/`). Must know without the screen: the five token checks, the 401-versus-isError rule, why the read is strongly consistent, what Cognito cannot do, the gateway role's five actions, and how the credential flow avoids long-lived keys.
 - **Ozi**: the island (`island/`). Must know: the reducer and seq dedupe, the effects queue of three, LIVE / STALE computed from poll age, why the buttons only POST, what is pre-existing (`island/ASSETS.md`), and the fonts' licence (SIL OFL 1.1).
-- **Teammate #3**: the agent (`agent/main.py`), the launcher (`launcher/run.py`), the kill, and the business plan. Must know: what the agent process holds and does not hold, token rotation through the file, how the launcher kills, why the task is deterministic, why Nova, and the buyer, price and cost estimates.
+- **Daniel**: the agent (`agent/main.py`), the launcher (`launcher/run.py`), the kill, and the business plan. Must know: what the agent process holds and does not hold, token rotation through the file, how the launcher kills, why the task is deterministic, why Nova, and the buyer, price and cost estimates.
 
 ---
 
@@ -292,7 +292,7 @@ The model's wording can still vary between runs. The calls it must make are fixe
 
 The model is the thing being controlled. Any model would show the same refusals, because the gateway, not the model, decides.
 
-## The business plan (teammate #3)
+## The business plan (Daniel)
 
 From the team's night-before plan (sections 2 and 9; a private planning file, not in this repo). Prices and costs are **estimates**.
 - **Who buys.** The platform or security engineering team at a company of a few hundred to a few thousand engineers that lets agents use MCP tools against repositories, ticketing, email and cloud APIs. The CISO or VP of platform buys, the on-call engineer uses it daily, and an auditor reads it quarterly.

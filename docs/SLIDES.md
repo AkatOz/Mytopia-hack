@@ -11,7 +11,7 @@ Five slides, shown after the live demo. The deck itself is `docs/slides.html` (o
 - Pull an AI agent's badge and its next tool call is refused.
 - A10 Track, Prompt 1: Agentic Identity.
 - Authenticate an agent, allow selected MCP tools, revoke mid-task, block what follows.
-- Bob: gateway, identity, AWS. Ozi: the island. Teammate #3: agent, launcher, business.
+- Bob: gateway, identity, AWS. Ozi: the island. Daniel: agent, launcher, business.
 
 **Speaker (Bob), 49 words:** "We are MYTOPIA, A10 track, prompt one. You just watched an agent authenticate with its own Cognito identity, use the tools on its badge, get refused when it tried email, and get refused again on its next call after we pulled its badge, while its token was still valid."
 
@@ -68,7 +68,7 @@ Five slides, shown after the live demo. The deck itself is `docs/slides.html` (o
 - Limits: in-flight call completes; admin token is a demo shortcut; secret in a file, not attested identity.
 - Next: separate agent sandbox, Streams instead of polling, task-scoped badges, AgentCore path.
 
-**Speaker (teammate #3), 56 words:** "The buyer is the platform team that lets agents touch internal tools. Free to start, about ninety-nine dollars a month for a team, per agent for enterprise; AWS costs us roughly four to twenty-five dollars per million decisions, an estimate. Claude Code wrote the engine this weekend; the island renderer is Ozi's earlier project. Thank you."
+**Speaker (Daniel), 56 words:** "The buyer is the platform team that lets agents touch internal tools. Free to start, about ninety-nine dollars a month for a team, per agent for enterprise; AWS costs us roughly four to twenty-five dollars per million decisions, an estimate. Claude Code wrote the engine this weekend; the island renderer is Ozi's earlier project. Thank you."
 
 ---
 

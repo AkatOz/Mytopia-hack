@@ -173,6 +173,6 @@ See [ASSETS.md](ASSETS.md) for what was made today, what was pre-existing and wh
 
 **Ozan "Ozi"** explains the island. Its renderer comes from Mytopia, his earlier personal project, and his Claude Code agent built the island this weekend: the reducer that turns each logged event into a drawing, the gatehouse, the robots, and why the buttons only POST.
 
-**[teammate #3's name]** explains the agent, the launcher and the business plan: what the agent process holds and does not hold, how the launcher rotates its token and kills its process tree, why the task is deterministic, why Nova, and who would buy this.
+**Daniel** explains the agent, the launcher and the business plan: what the agent process holds and does not hold, how the launcher rotates its token and kills its process tree, why the task is deterministic, why Nova, and who would buy this.
 
 Repository layout: `contract/` the event and API contract between engine and island; `gateway/` the MCP gateway; `tools_lambda/` the six tools; `agent/` the Strands agent; `launcher/` the harness that owns it; `infra/` AWS provisioning; `island/` the face; `scripts/` setup, probe and demo scripts; `tools/` the mock gateway and fixture checker; `tests/` pytest; `replay/` recordings; `docs/` everything else.

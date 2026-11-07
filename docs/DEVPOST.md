@@ -1,6 +1,6 @@
 # Devpost submission, ready to paste
 
-Every field of the form, in the order Devpost usually asks for them. Numbers come from files in this repo (cited in brackets, delete the brackets when pasting if you like) or are labelled estimates. Before pasting, fill the three `TODO` lines (video link, screenshots, teammate #3's name).
+Every field of the form, in the order Devpost usually asks for them. Numbers come from files in this repo (cited in brackets, delete the brackets when pasting if you like) or are labelled estimates. Before pasting, fill the two `TODO` lines (video link, screenshots).
 
 ---
 
@@ -107,7 +107,7 @@ And from the build itself: Cognito's `GetClientToken` issues a machine token thr
 
 ### Built with AI, and what came before the event
 
-Claude Code wrote the engine (gateway, launcher, agent, tools Lambda, provisioning) during the event on Saturday 2026-11-07, and Ozi's Claude Code agent built the island scene this weekend. The island's renderer and its building and robot shapes come from Mytopia, Ozi's personal project written before the event (2026-10-07 to 2026-10-20); every pre-existing file and third-party asset (three.js, MIT; Pixelify Sans and VT323, SIL Open Font License 1.1) is listed in `island/ASSETS.md`. Each of us can explain the part we present: Bob the gateway, identity and AWS; Ozi the island; teammate #3 the agent, the launcher and the business plan.
+Claude Code wrote the engine (gateway, launcher, agent, tools Lambda, provisioning) during the event on Saturday 2026-11-07, and Ozi's Claude Code agent built the island scene this weekend. The island's renderer and its building and robot shapes come from Mytopia, Ozi's personal project written before the event (2026-10-07 to 2026-10-20); every pre-existing file and third-party asset (three.js, MIT; Pixelify Sans and VT323, SIL Open Font License 1.1) is listed in `island/ASSETS.md`. Each of us can explain the part we present: Bob the gateway, identity and AWS; Ozi the island; Daniel the agent, the launcher and the business plan.
 
 ---
 
@@ -145,7 +145,7 @@ Claude Code wrote MYTOPIA's engine during the event, and the island's renderer i
 
 - Bob (bob.vuminh@gmail.com): the gateway, identity and AWS.
 - Ozan "Ozi": the island.
-- TODO teammate #3: the agent, the launcher and the business plan.
+- Daniel: the agent, the launcher and the business plan.
 
 ---
 
