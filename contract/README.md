@@ -34,7 +34,8 @@ Identical in the gateway's memory, in DynamoDB, in `GET /events` and in the fixt
 - `args_summary`: at most 80 characters, never a secret.
 - `ms_since_revoke`: a number only on the first `deny` after a `revoked` for that agent; otherwise `null`.
 - `prev_hash`, `hash`: SHA-256 hex; `hash` covers the canonical JSON (`sort_keys`, compact separators) of the record without `hash`; the first record's `prev_hash` is `"genesis"`. The fixture's hashes are placeholders.
-- `run_stopped` carries the exit code in `reason` (`exit 1 (killed by harness)`) and the pid in `args_summary`.
+- `run_stopped` carries the exit code in `reason` and the pid in `args_summary`. A kill is marked two ways: a `kill_requested` for that agent precedes it, and `reason` reads `exit <code> (killed by harness)` with `args_summary` `pid=<pid> killed by harness`. A run that ends on its own reads `exit <code> (exited)` and `pid=<pid> exited`; the island shows RUN ENDED for it, with no fire.
+- The gateway never restarts `seq` below the last value it served: on start it resumes the current chain's counter; only `POST /demo/reset` starts a new chain. The admin routes accept both agent ids.
 
 ## The HTTP API (`http://127.0.0.1:8787`)
 
