@@ -120,9 +120,11 @@ export function apply(state, ev) {
 
     case 'run_stopped': {
       a.plate = 'stopped';
-      const killed = !!a.killTs;
+      // A kill is a run_stopped after this agent's kill_requested, or one the launcher marks "killed by harness".
+      // A run that exited on its own ("exited", "task complete") is never shown as killed.
+      const killed = !!a.killTs || /killed by harness/i.test(`${ev.reason} ${ev.args_summary}`);
       if (killed) {
-        const ms = Date.parse(ev.ts) - Date.parse(a.killTs);
+        const ms = a.killTs ? Date.parse(ev.ts) - Date.parse(a.killTs) : NaN;
         a.stopNote = Number.isFinite(ms) ? `run stopped ${ms} ms after KILL` : 'run stopped';
         s.ticker = `${a.stopNote} · ${ev.reason}`;
         if (a.lastDeniedHome) {

@@ -19,11 +19,22 @@ python3 -m http.server 5300
 
 When served by the gateway at `http://127.0.0.1:8787/`, the gateway's own `/config.js` is used. Keys: **T** shows the event table, **R** replays the fixture, **Esc** closes overlays. Tests: `node --test island/tests/*.test.mjs`.
 
+## Files a judge will open
+
+| File | What it is |
+|---|---|
+| `index.html` | the page: paper HUD panels, CSS, the import map for the vendored three.js |
+| `src/reducer.js` | the only logic: `apply(state, event)` → new state + effects; badge rule; dedupe |
+| `src/main.js` | wiring: live polling / replay, the effects queue, the HUD, the four buttons, keys |
+| `src/scene.js` | the three.js island: buildings, gatehouse, robots, plates, lamps, sparks, smoke, fire |
+| `three-d-stage.js` | Mytopia's renderer component (pre-existing, unchanged) |
+| `tests/reducer.test.mjs` | the fixture run through the reducer |
+
 ## How the island works (ten lines)
 
 1. `src/reducer.js` has one pure function, `apply(state, event)`, that returns the new state and a list of effects. Nothing else changes state.
 2. Events are applied in `seq` order, once each. Anything at or below the cursor (the highest seq applied) is ignored.
-3. `src/feed.js` gets events in one of two ways. Live: it polls `GET /events?since_seq=<cursor>` every second. Replay: it reads a JSON file and hands over one event every 1.5 s. Both paths feed the same `apply`.
+3. `src/main.js` gets events in one of two ways. Live: it polls `GET /events?since_seq=<cursor>` every second. Replay: it reads a JSON file and hands over one event every 1.5 s. Both paths feed the same `apply`.
 4. The effects (spark, lamp, stamp, banner, plate, smoke, move) go into a queue in `src/main.js`. At most three play at once, so the screen stays calm.
 5. `src/scene.js` builds the island in three.js and only knows how to draw. It has no idea why something is drawn.
 6. Smoke and fire are state, not effects. They come from each building's denial count in the reducer state.

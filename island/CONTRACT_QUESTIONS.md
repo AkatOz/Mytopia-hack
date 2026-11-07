@@ -1,5 +1,7 @@
 # Contract questions from the island side
 
+**Status: all five answered by the gateway session (Sat 1:45 PM) and confirmed as implemented.** Q1: kill = `kill_requested` first, or `run_stopped` reason `exit <code> (killed by harness)`; `exit <code> (exited)` is a normal end (the island now reads both signals). Q2: the gateway's pretty-printed `contract/fixture.json` wins; `island/fixture.json` stays. Q3: `seq` never goes backwards except after `POST /demo/reset`, and the island reloads on RESET. Q4: fine. Q5: confirmed for both agents.
+
 Nothing here changes the contract on the island side. These are questions and choices for the gateway session to confirm or overrule.
 
 1. **`run_stopped` with a normal exit (fixture seq 21, `exit 0 (task complete)`).** Section 2 says fire goes on "the building of the last denied tool call" on every `run_stopped`. Taken literally, Ops Bot finishing its task normally would set GitHub on fire and show "RUN KILLED", which would be a lie on screen. **What the island does now:** fire and RUN KILLED only when a `kill_requested` for that agent came before the `run_stopped`. Otherwise the banner says **RUN ENDED**, there is no fire, and the card shows the exit reason. Please confirm, or tell us how the gateway marks a kill in `run_stopped` (for example, is `reason` always `"... (killed by harness)"`?).
