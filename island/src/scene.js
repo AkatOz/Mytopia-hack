@@ -461,7 +461,7 @@ export async function createScene(stage) {
     const k = chain.g, cc = chain.c;
     k.fillStyle = '#fbf7ee'; k.fillRect(0, 0, cc.width, cc.height);
     k.fillStyle = '#2b221e'; k.font = '54px VT323'; k.fillText('HASH CHAIN', 30, 64);
-    k.font = '28px VT323'; k.fillStyle = '#7a6f62'; k.fillText(mode === 'replay' ? 'fixture placeholders, not verified' : 'each row names the one before it', 30, 102);
+    k.font = '28px VT323'; k.fillStyle = '#7a6f62'; k.fillText(mode === 'replay' ? 'fixture placeholders, not verified' : 'tamper-evident: each row names the last', 30, 102);
     log.slice(-6).forEach((e, i) => {
       const y = 160 + i * 78, h8 = String(e.hash || '').slice(0, 8), p8 = String(e.prev_hash || '').slice(0, 8);
       k.fillStyle = '#efe6d2'; k.fillRect(24, y - 40, cc.width - 48, 58);

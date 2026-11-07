@@ -46,7 +46,7 @@ When served by the gateway at `http://127.0.0.1:8787/`, the gateway's own `/conf
 ## Stage B (after the live integration passed)
 
 - **Walking robots:** a robot walks through the arch to the building of its latest allowed call, and back to the gate on a deny.
-- **Gatehouse ledger room:** press G or click the gatehouse. An iris wipe opens a cutaway room. The chalkboard lists the last seven decisions from the same event log (allow in green, deny in red, admin in amber), the paper board beside it shows the hash chain (each row names the hash of the one before it), and the clerk robot stamps every new row. It is drawn from `state.log` and decides nothing.
+- **Gatehouse ledger room:** press G or click the gatehouse. An iris wipe opens a cutaway room. The chalkboard lists the last seven decisions from the same event log (allow in green, deny in red, admin in amber), the paper board beside it shows the hash chain (each row names the hash of the one before it). The chain is **tamper-evident, not tamper-proof**: an edited or deleted row breaks the links, so the edit shows; it does not stop anyone from making one. The gateway writes and verifies the chain; the island only draws it. and the clerk robot stamps every new row. It is drawn from `state.log` and decides nothing.
 - **BLOCKED bin:** each denied call drops a red packet into the bin by the gate.
 - **Click a robot:** shows the raw JSON of its latest event.
 - **Save replay:** downloads every event seen, so a clean live run can become the backup recording.
