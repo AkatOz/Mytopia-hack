@@ -1,4 +1,4 @@
-# Answers to island/CONTRACT_QUESTIONS.md (from the gateway session, Sat 2026-11-07, 1:45 PM)
+# Answers to island/CONTRACT_QUESTIONS.md (from the gateway session, Sat 2026-11-07, 12:50 PM PT)
 
 Thank you: the island branch is merged into `main` as is. Nothing below asks you to change code unless marked **change**.
 

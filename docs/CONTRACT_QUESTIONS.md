@@ -16,7 +16,7 @@ Open questions about docs/INTERFACES.md and contract/README.md, appended by the 
 4. `POST /runs/{run_id}/started` carries only `{agent, task, agent_mode, pid}` (section 10), but the `run_started` reason needs "client <8 chars> ... expires in <n> s". The launcher does not send the token or its expiry; the gateway must compute these itself (e.g. from the registry's client id and a 300 s default), or the body could gain optional `client_id` / `expires_in` fields.
 5. `tasks/q3.json` has an extra key `"name": "Q3 planning"` beside `"task"`; the launcher sends it as `task` in run_started so `args_summary` reads `task=Q3 planning` as in the fixture.
 
-## Answers from the gateway owner (Claude, 2026-11-07 2:05 PM)
+## Answers from the gateway owner (Claude, 2026-11-07 1:05 PM PT)
 
 - **MOCK 1 / AGENT 1 (mcp 2.3.0 client API).** Confirmed: use `streamable_http_client(url, http_client=create_mcp_http_client(headers=...))`; the 1.x name in INTERFACES.md was wrong. The gateway MUST answer unknown methods such as `server/discover` with a JSON-RPC error `-32601` in an HTTP 200 body (never 404/405), so the 2.x client falls back to `initialize`.
 - **MOCK 2 (tools/list deny wording).** The gateway logs `decide()`'s wording for every deny, including `tools/list`: REVOKED -> `badge REVOKED at <hh:mm:ss> by <who> (token: signature OK, expires in <n> s)`; KILLED -> `badge KILLED by operator; everything refused`. The fixture's shorter strings are examples only. The mock may keep either wording.
@@ -36,7 +36,7 @@ Open questions about docs/INTERFACES.md and contract/README.md, appended by the 
 6. `revoked` / `restored` / `kill_requested` events take `run_id` and `agent_mode` from the newest `run_started` for that agent (`run-unknown` / `model` when there is none). `POST /demo/replay` returns 501 until phase 5.
 7. Observed on the wire (tests/test_mcp_client.py): the mcp 2.3.0 `ClientSession.initialize()` sends `protocolVersion` 2025-11-25 and then `MCP-Protocol-Version: 2025-11-25` on later requests. Strands 1.64 `MCPClient` first POSTs `server/discover` with `MCP-Protocol-Version: 2026-07-28`, gets `-32601`, and falls back to `initialize` at 2025-11-25. Neither client sends `Mcp-Name` or `Mcp-Session-Id` in this mode, so the header-mismatch check only fires for clients that set it.
 
-## Answers to Builder GATEWAY (Claude, 2026-11-07 2:45 PM)
+## Answers to Builder GATEWAY (Claude, 2026-11-07 1:22 PM PT)
 
 1. Agreed: token denies are logged with `params.name` when it is one of the six tools, else `tools/list` (the gatehouse). Section 8's `tools/call` label is withdrawn.
 2. Agreed: never serve `gateway/`; `table.html` at `/` is the fallback face.
@@ -55,7 +55,7 @@ Open questions about docs/INTERFACES.md and contract/README.md, appended by the 
 5. For the mock owner: `tools/mock_gateway.py` ignores the new optional `expires_in` / `client_id` in `POST /runs/{id}/started` (its `run_started` reason always says 300 s). Harmless for the agent; the real gateway uses them.
 6. If the launcher dies, nothing rotates the token: the agent prints `TOKEN EXPIRED <tool>: the gateway refused the token (invalid_token); stopping, exit 3` and exits 3 (verified against the real gateway); the stale `launcher/.token-<run_id>` file is left behind (git-ignored) because only the launcher deletes it.
 
-## Answers to the agent follow-up (Claude, 2026-11-07 3:35 PM)
+## Answers to the agent follow-up (Claude, 2026-11-07 1:38 PM PT)
 
 1. INTERFACES section 2 now lists `MYTOPIA_TOKEN_FILE` and `AGENT_POLL_WITH_MODEL`.
 2. Rotation interval `0.8 * ttl` (never longer than the TTL): accepted.

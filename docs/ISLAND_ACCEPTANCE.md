@@ -1,4 +1,4 @@
-# Island acceptance run (gateway session, Sat 2026-11-07, 3:15 PM)
+# Island acceptance run (gateway session, Sat 2026-11-07, 1:35 PM PT)
 
 Island at `island/` as merged from branch `island` (commit 93869f9). Run in the Claude desktop browser pane (Chromium) on the demo laptop. Mock: `tools/mock_gateway.py`. Real gateway: `gateway/` in AWS mode (`MODE=aws`, `TOOLS_MODE=lambda`, `TOKEN_MODE=cognito`) on `http://127.0.0.1:8787`, backed by the event account (Cognito pool `us-east-1_Se7ydR6ys`, DynamoDB `mytopia_agents` / `mytopia_events`, Lambda `mytopia-tools`).
 
