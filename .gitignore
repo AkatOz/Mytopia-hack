@@ -25,3 +25,5 @@ infra/gateway_role.txt
 
 # island (teammate #2)
 island/config.js
+launcher/.token-*
+gateway/events.*.jsonl
