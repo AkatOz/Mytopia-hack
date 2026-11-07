@@ -94,13 +94,15 @@ three-d-stage:not(:defined) { visibility: hidden; }
 .sheet table { border-collapse: collapse; width: 100%; font-family: var(--vt); font-size: 18px; }
 .sheet th, .sheet td { border-bottom: 1px solid var(--line); padding: 2px 6px; text-align: left; vertical-align: top; }
 .sheet th { background: var(--ink); color: var(--cream); position: sticky; top: 0; }
+.sheet td:nth-child(2) { white-space: nowrap; }
 .sheet .allow { color: var(--good); } .sheet .deny { color: var(--bad); }
 .sheet pre { font-family: var(--vt); font-size: 18px; white-space: pre-wrap; margin: 0; }
 
 /* about 800 px wide: the terminal takes the right 38 percent of the projector */
 @media (max-width: 900px) {
   #banner { font-size: 32px; } #card { width: 250px; font-size: 13px; } #card h2 { font-size: 18px; }
-  #ops { width: 168px; } #ops .count { font-size: 42px; } #ops button { font-size: 15px; padding: 4px 6px; }
+  #ops { width: 146px; top: 70px; padding: 8px; } #ops .count { font-size: 38px; } #ops .lbl, #ops .for, #ops .hint { font-size: 15px; } #ops button { font-size: 14px; padding: 3px 6px; margin: 4px 0; }
+  #mode { font-size: 22px; } .tag.place { font-size: 16px; }
   #ticker { font-size: 18px; } .bubble { font-size: 16px; max-width: 200px; } .stamp { font-size: 28px; }
   .sheet { inset: 56px 190px 60px 10px; }
 }

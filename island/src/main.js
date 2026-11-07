@@ -75,6 +75,7 @@ function render() {
   $('c-badge').textContent = `${a.allowedTools.length} of ${ALL_TOOLS.length} tools`;
   $('c-calls').textContent = a.calls; $('c-blocked').textContent = a.blocked;
   $('c-note').textContent = a.revokeMs != null ? `blocked ${a.revokeMs} ms after REVOKE` : a.stopNote;
+  $('c-note').style.color = a.revokeMs != null || a.stopNote.startsWith('run stopped') ? 'var(--bad)' : 'var(--dim)';
   $('o-count').textContent = state.blockedTotal;
   $('o-for').textContent = `acts on: ${a.id}`;
   for (const b of document.querySelectorAll('#ops button')) {
@@ -87,7 +88,7 @@ function render() {
   if ($('table').classList.contains('on')) renderTable();
 }
 function renderTable() {
-  $('t-body').innerHTML = state.log.map((e) => `<tr><td>${e.seq}</td><td>${esc(e.ts)}</td><td>${esc(e.agent)}</td><td>${esc(e.tool)}</td><td class="${esc(e.decision)}">${esc(e.decision)}</td><td>${esc(e.rule)}</td><td>${esc(e.reason)}</td><td>${e.latency_ms ?? ''}</td></tr>`).join('');
+  $('t-body').innerHTML = state.log.map((e) => `<tr><td>${e.seq}</td><td title="${esc(e.ts)}">${esc(String(e.ts || '').slice(11, 23))}</td><td>${esc(e.agent)}</td><td>${esc(e.tool)}</td><td class="${esc(e.decision)}">${esc(e.decision)}</td><td>${esc(e.rule)}</td><td>${esc(e.reason)}</td><td>${e.latency_ms ?? ''}</td></tr>`).join('');
 }
 function renderBadge() {
   const m = badge({ source, now: Date.now(), lastGoodPoll, staleAfterMs: cfg.staleAfterMs });
@@ -116,7 +117,7 @@ function follow() {
     t.textContent = PLACE_NAME[k]; t.style.left = p[0] + 'px'; t.style.top = Math.max(80, p[1]) + 'px';
   }
   const bp = scene.binScreen(); const bc = tags.bin ||= Object.assign(ov.appendChild(document.createElement('div')), { className: 'bincount' });
-  bc.textContent = `BLOCKED ${state.blockedTotal}`; bc.style.left = bp[0] + 'px'; bc.style.top = bp[1] + 'px';
+  bc.textContent = `BLOCKED ${state.blockedTotal}`; bc.style.left = bp[0] - 30 + 'px'; bc.style.top = bp[1] + 'px';
   requestAnimationFrame(follow);
 }
 requestAnimationFrame(follow);
