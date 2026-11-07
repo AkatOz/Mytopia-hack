@@ -62,3 +62,18 @@ The numbers above are from the first live run (Sat 1:40 PM). After the latency p
 - Kill to process gone: expected about 0.3 s from the KILL click to `run_stopped` (the launcher's 250 ms status poll plus a psutil kill of about 25 to 45 ms; the launcher prints its own kill-to-gone time, about 40 ms in a local test), down from about 1.3 s. A local-mode test measured 291 ms from `kill_requested` to `run_stopped`. To be re-measured in rehearsal 1.
 - Token still valid at the moment of refusal: about 250 s. Cognito could not have revoked it; the gateway did not need to.
 - The agent's terminal now prints the gateway's own decision time (`ALLOW read_file (gateway 79 ms)`), read from the MCP result's `_meta`, instead of the agent-side time that included the 2-second demo pace.
+
+## Second live run, after the latency work (Sat 2026-11-07, 3:44 PM PT, scripted client, real AWS)
+
+Gateway restarted on the optimized code (commit d1cc066): warm-up at startup took `registry 379 ms | credentials 0 ms | jwks 494 ms | lambda 571 ms`, so the first call paid nothing. The run used `--scripted` (no model), REVOKE at +16 s and KILL at +23 s through the admin API. Chain `chain-20261107T234351Z`, 12 records.
+
+| What | First run (1:40 PM) | This run | Why it moved |
+|---|---|---|---|
+| Decision time, allow rows (gateway `latency_ms`) | p50 166 / p95 177 ms | **p50 82 / p95 91 ms** | one strongly consistent read per call instead of two (the token check no longer reads the registry) |
+| Decision time, deny rows | p50 162 ms | **p50 82 / p95 109 ms** | same |
+| Revoke to first refused call | 494 ms (poll cycle then about 5.4 s) | **1897 ms** (poll cycle now 3 s, so anywhere from near zero to about 3.1 s) | fixed 3 s agent cadence, pace as a floor |
+| KILL click to `run_stopped` | 1274 ms | **249 ms** | launcher polls every 250 ms and kills with psutil |
+| Kill to process gone, as the launcher measured it | taskkill 534 ms | **psutil 50 ms** | |
+| The terminal line | `ALLOW read_file 2388 ms` (included the 2 s demo pace) | `ALLOW read_file (gateway 83 ms)` | the gateway returns its own time in the MCP result's `_meta` |
+
+Token still valid at the first refusal: 280 s. The model-mode run on the rebuilt island (rehearsal 1) re-measures all of this; quote the numbers from `GET /stats` at the time.
