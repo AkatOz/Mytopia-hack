@@ -121,12 +121,13 @@ class DynamoRegistry:
     def set_status(self, agent_id: str, status: str, by: str) -> dict:
         fields = status_fields(status, by)
         names = {f"#{k}": k for k in fields}
+        names["#agent"] = "agent"  # "agent" and "status" are DynamoDB reserved words: always alias them
         values = {f":{k}": v for k, v in fields.items()}
         update = "SET " + ", ".join(f"#{k} = :{k}" for k in fields)
         try:
             result = self._table().update_item(
                 Key={"agent": agent_id}, UpdateExpression=update, ExpressionAttributeNames=names,
-                ExpressionAttributeValues=values, ConditionExpression="attribute_exists(agent)",
+                ExpressionAttributeValues=values, ConditionExpression="attribute_exists(#agent)",
                 ReturnValues="ALL_NEW")
         except RegistryUnavailable:
             raise
