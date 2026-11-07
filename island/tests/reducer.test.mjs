@@ -76,3 +76,20 @@ test('buttons only acknowledge on the matching event', () => {
   assert.ok(all[13].some((f) => f.kind === 'ack' && f.action === 'kill'));
   assert.ok(all[16].some((f) => f.kind === 'ack' && f.action === 'restore'));
 });
+
+test('run_stopped marked "killed by harness" counts as a kill even without the kill_requested row', () => {
+  let s = initialState();
+  for (const e of fixture.slice(0, 13)) s = apply(s, e).state; // up to the tampered-token deny, no kill_requested
+  const r = apply(s, { ...fixture[15], seq: 14 });            // run_stopped: exit 1 (killed by harness)
+  assert.ok(r.effects.some((f) => f.kind === 'banner' && f.text === 'RUN KILLED'));
+  assert.equal(r.state.buildings.files.fire, true);
+  assert.equal(r.state.agents['research-bot'].stopNote, 'run stopped');
+});
+
+test('a gateway "exit 0 (exited)" run_stopped is RUN ENDED with no fire', () => {
+  let s = initialState();
+  for (const e of fixture.slice(17, 20)) s = apply(s, e).state;
+  const r = apply(s, { ...fixture[20], reason: 'exit 0 (exited)', args_summary: 'pid=5210 exited' });
+  assert.ok(r.effects.some((f) => f.kind === 'banner' && f.text === 'RUN ENDED'));
+  assert.equal(r.state.buildings.github.fire, false);
+});
