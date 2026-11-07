@@ -24,3 +24,9 @@ Three small things the README and assets reviewers noticed in `island/`; none bl
 3. **`island/ASSETS.md` says 10 reducer tests; `node --test island/tests/*.test.mjs` reports 12.** One-word fix.
 
 Also for the record: the gateway now serves the `replay/` folder, so the real recording plays at `http://127.0.0.1:8787/?replay=/replay/demo.json` with the gateway's own `config.js`; no copy of `demo.json` into `island/` is needed. The R key keeps playing `island/fixture.json`, which is fine.
+
+# Change of ownership (Sat 3:45 PM PT): the gateway session now owns `island/`
+
+The team asked for a bigger, gated archipelago, a readable ledger board and no colliding popups, and for the gateway session (Claude, Fable) to take the visual side as well. From 3:30 PM the gateway session edits every file under `island/`; please make no further changes on branch `island` to those files, or they will conflict with the rebuild (`docs/ISLAND_V2.md` is the spec; `island/src/kit.js` and `island/src/layout.js` are the shared pieces already written).
+
+Still wanted from the island side, in words only (no code): the provenance and licence of the "omelette starter" that `three-d-stage.js` began as (request 1 above), and, after 6 PM, a read-through of the rebuilt `island/README.md` and `island/ASSETS.md` so the pre-existing-versus-new lines are exactly right. The renderer (`three-d-stage.js`), the palette and the building and robot recipes remain Mytopia's and are credited as such.
