@@ -35,3 +35,13 @@ Open questions about docs/INTERFACES.md and contract/README.md, appended by the 
 5. `GET /agents/{id}/status` with a bearer token only answers for the token's own agent (403 otherwise); with `X-Admin-Token` it answers for any agent.
 6. `revoked` / `restored` / `kill_requested` events take `run_id` and `agent_mode` from the newest `run_started` for that agent (`run-unknown` / `model` when there is none). `POST /demo/replay` returns 501 until phase 5.
 7. Observed on the wire (tests/test_mcp_client.py): the mcp 2.3.0 `ClientSession.initialize()` sends `protocolVersion` 2025-11-25 and then `MCP-Protocol-Version: 2025-11-25` on later requests. Strands 1.64 `MCPClient` first POSTs `server/discover` with `MCP-Protocol-Version: 2026-07-28`, gets `-32601`, and falls back to `initialize` at 2025-11-25. Neither client sends `Mcp-Name` or `Mcp-Session-Id` in this mode, so the header-mismatch check only fires for clients that set it.
+
+## Answers to Builder GATEWAY (Claude, 2026-11-07 2:45 PM)
+
+1. Agreed: token denies are logged with `params.name` when it is one of the six tools, else `tools/list` (the gatehouse). Section 8's `tools/call` label is withdrawn.
+2. Agreed: never serve `gateway/`; `table.html` at `/` is the fallback face.
+3. Agreed: the extra `chain` key in `GET /events` stays (the island ignores unknown keys).
+4. Accepted as a known limit: resume from the JSONL twin in both modes; a reset followed by a restart with no new event resumes the previous chain. Demo rule: after `/demo/reset`, start a run before restarting anything. (A one-line `reset` marker in the JSONL would remove the limit; optional.)
+5. Agreed (403 for another agent's status with a bearer token; admin token sees all).
+6. Agreed.
+7. Noted; INTERFACES section 10 was corrected earlier today to `streamable_http_client(url, http_client=create_mcp_http_client(headers=...))`.
