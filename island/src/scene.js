@@ -392,6 +392,104 @@ export async function createScene(stage) {
   const sparkMat = { ok: new THREE.MeshStandardMaterial({ color: 0x7fd49a, emissive: 0x3fbf6a, emissiveIntensity: 1.2 }), bad: new THREE.MeshStandardMaterial({ color: 0xea7a6b, emissive: 0xd8432f, emissiveIntensity: 1.2 }) };
   const GATE_TOP = new THREE.Vector3(0, 3.0, 7.2), BARRIER_PT = new THREE.Vector3(0, 1.0, 7.9);
 
+  // ---------- Stage B: the gatehouse interior, a ledger room (Mytopia's cutaway dollhouse idea) ----------
+  // Only the back and left walls exist, so the iso camera looks straight in. The chalkboard is a canvas drawn from the
+  // event log (allow green, deny red, admin amber); the left wall shows the hash chain. The clerk robot stamps each new row.
+  const room = new THREE.Group(); room.name = 'ledger_room'; room.visible = false;
+  stage._scene.add(room);
+  const RW = 11, RD = 8, RH = 5.0;
+  {
+    box(room, 'wood', 'room_floor', RW, 0.3, RD, 0, -0.3, 0);
+    for (let x = -RW / 2 + 0.55; x < RW / 2; x += 0.55) box(room, 'wood_dark', 'floor_line', 0.03, 0.01, RD, x, 0, 0);
+    box(room, 'plaster', 'room_back_wall', RW, RH, 0.3, 0, -0.3, -RD / 2 - 0.15);
+    box(room, 'plaster', 'room_left_wall', 0.3, RH, RD, -RW / 2 - 0.15, -0.3, 0);
+    box(room, 'wood_dark', 'skirting', RW, 0.25, 0.08, 0, 0, -RD / 2 + 0.04); box(room, 'wood_dark', 'skirting', 0.08, 0.25, RD, -RW / 2 + 0.04, 0, 0);
+    box(room, 'wood_dark', 'wall_beam', RW, 0.2, 0.12, 0, RH - 0.6, -RD / 2 + 0.06);
+  }
+  const boardTex = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return { c, g: c.getContext('2d'), t }; };
+  const ledger = boardTex(1280, 720), chain = boardTex(640, 640);
+  { // chalkboard on the back wall
+    box(room, 'wood_dark', 'board_frame', 7.0, 4.0, 0.14, 1.6, 0.4, -RD / 2 + 0.07);
+    put(room, new THREE.PlaneGeometry(6.7, 3.7), new THREE.MeshBasicMaterial({ map: ledger.t, toneMapped: false }), 'ledger_board', 1.6, 2.4, -RD / 2 + 0.16);
+    box(room, 'wood_light', 'chalk_tray', 6.8, 0.08, 0.25, 1.6, 0.36, -RD / 2 + 0.2);
+  }
+  { // hash-chain board on the back wall, left of the chalkboard
+    box(room, 'wood_dark', 'chain_frame', 2.9, 2.9, 0.12, -3.6, 1.1, -RD / 2 + 0.06);
+    put(room, new THREE.PlaneGeometry(2.7, 2.7), new THREE.MeshBasicMaterial({ map: chain.t, toneMapped: false }), 'chain_paper', -3.6, 2.55, -RD / 2 + 0.14);
+    box(room, 'window', 'left_window', 0.06, 1.4, 2.0, -RW / 2 + 0.02, 1.6, 0.8); box(room, 'wood_light', 'left_window_frame', 0.1, 0.1, 2.2, -RW / 2 + 0.05, 1.5, 0.8);
+  }
+  // the clerk's desk, a stamp, a paper stack, the BLOCKED tray
+  let clerkArm, stampT = 0;
+  {
+    const d = grp(room, 'clerk_desk', 1.2, 0, 1.3, 0);
+    box(d, 'wood', 'desk_top', 3.2, 0.12, 1.3, 0, 0.95, 0); box(d, 'wood_dark', 'desk_front', 3.2, 0.95, 0.1, 0, 0, 0.6);
+    for (const s of [-1, 1]) box(d, 'wood_dark', 'desk_side', 0.1, 0.95, 1.2, s * 1.55, 0, 0);
+    box(d, 'paper', 'paper_stack', 0.6, 0.18, 0.45, -0.9, 1.07, 0); box(d, 'paper', 'paper_sheet', 0.55, 0.02, 0.4, 0.15, 1.08, 0.1);
+    box(d, 'stripe_red', 'blocked_tray', 0.7, 0.14, 0.5, 1.0, 1.07, 0);
+    box(d, 'stripe_white', 'desk_sign', 1.5, 0.35, 0.04, 0, 0.35, 0.66);
+    // the clerk: Mytopia's robot recipe, seated behind the desk, facing the camera
+    const c = grp(room, 'clerk', 1.2, 0, 0.2, 0.35); c.scale.setScalar(2.4);
+    box(c, 'robot_orange', 'clerk_body', 0.42, 0.34, 0.4, 0, 0.14, 0);
+    box(c, 'robot_grey', 'clerk_neck', 0.07, 0.14, 0.07, 0, 0.48, 0);
+    const h = grp(c, 'clerk_head', 0, 0.6, 0); box(h, 'robot_cream', 'clerk_head', 0.38, 0.2, 0.22);
+    for (const s of [-1, 1]) box(h, 'eye', 'clerk_eye', 0.12, 0.12, 0.03, s * 0.09, 0.04, 0.115);
+    box(h, 'ink', 'clerk_visor', 0.4, 0.04, 0.12, 0, 0.2, 0.06);
+    clerkArm = grp(c, 'clerk_arm', 0.26, 0.42, 0.05);
+    box(clerkArm, 'robot_grey', 'arm', 0.07, 0.07, 0.34, 0, 0, 0.17); box(clerkArm, 'wood_dark', 'stamp_handle', 0.08, 0.14, 0.08, 0, -0.06, 0.34); box(clerkArm, 'stripe_red', 'stamp_head', 0.14, 0.05, 0.14, 0, -0.14, 0.34);
+  }
+  room.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  const COL = { allow: '#7fd49a', deny: '#ea7a6b', admin: '#f2c46b', harness: '#cfd6d0' };
+  function drawLedger(log, mode) {
+    const { g, c, t } = ledger;
+    g.fillStyle = '#2f3a33'; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = 'rgba(255,255,255,0.04)'; for (let i = 0; i < 40; i++) g.fillRect((i * 97) % c.width, (i * 53) % c.height, 120, 3); // chalk dust
+    g.fillStyle = '#f3ead7'; g.font = '76px VT323'; g.fillText('LEDGER', 40, 82);
+    g.font = '44px VT323'; g.fillStyle = '#b3aca2'; g.fillText(mode === 'replay' ? 'replay: recorded rows' : 'live: the gateway log', 330, 80);
+    const rows = log.slice(-7);
+    rows.forEach((e, i) => {
+      const y = 175 + i * 78, kind = e.decision === 'allow' ? 'allow' : e.decision === 'deny' ? 'deny' : e.tool === 'harness' ? 'harness' : 'admin';
+      if (i === rows.length - 1) { g.fillStyle = 'rgba(247,217,180,0.2)'; g.fillRect(24, y - 60, c.width - 48, 76); }
+      g.font = '72px VT323'; g.fillStyle = COL[kind];
+      g.fillText('#' + e.seq, 40, y);
+      g.fillText(e.decision === 'kill_requested' ? 'KILL' : e.decision === 'run_started' ? 'START' : e.decision === 'run_stopped' ? 'STOP' : e.decision.toUpperCase(), 190, y);
+      g.fillStyle = '#f3ead7'; g.fillText(String(e.tool).slice(0, 12), 520, y);
+      g.fillStyle = '#b3aca2'; g.fillText(String(e.agent).replace('-bot', ''), 1000, y);
+    });
+    if (!rows.length) { g.font = '72px VT323'; g.fillStyle = '#b3aca2'; g.fillText('no calls yet', 40, 200); }
+    t.needsUpdate = true;
+    // the chain: each row names the hash of the row before it
+    const k = chain.g, cc = chain.c;
+    k.fillStyle = '#fbf7ee'; k.fillRect(0, 0, cc.width, cc.height);
+    k.fillStyle = '#2b221e'; k.font = '54px VT323'; k.fillText('HASH CHAIN', 30, 64);
+    k.font = '28px VT323'; k.fillStyle = '#7a6f62'; k.fillText(mode === 'replay' ? 'fixture placeholders, not verified' : 'each row names the one before it', 30, 102);
+    log.slice(-6).forEach((e, i) => {
+      const y = 160 + i * 78, h8 = String(e.hash || '').slice(0, 8), p8 = String(e.prev_hash || '').slice(0, 8);
+      k.fillStyle = '#efe6d2'; k.fillRect(24, y - 40, cc.width - 48, 58);
+      k.fillStyle = '#2b221e'; k.font = '40px VT323'; k.fillText(`#${e.seq}  ${h8}`, 36, y);
+      k.fillStyle = '#7a6f62'; k.font = '30px VT323'; k.fillText(`<- ${p8}`, 380, y);
+      if (i) { k.fillStyle = '#2b221e'; k.fillRect(70, y - 52, 6, 12); }
+    });
+    chain.t.needsUpdate = true;
+    stampT = 0.45;
+  }
+  document.fonts.load('40px VT323').then(() => drawLedger([], 'live'));
+  let saved = null;
+  function setRoom(on) {
+    const cam = stage._camera, ctl = stage._controls;
+    if (on && !saved) {
+      saved = { pos: cam.position.clone(), target: ctl.target.clone(), zoom: cam.zoom, bg: stage._scene.background };
+      // look at the back wall almost head-on so the chalkboard reads from across a room
+      const len = cam.position.distanceTo(ctl.target), ctr = new THREE.Vector3(0.2, 2.1, -1.2);
+      ctl.target.copy(ctr); cam.position.copy(ctr).add(new THREE.Vector3(0.16, 0.5, 1).normalize().multiplyScalar(len)); cam.zoom = 1.95;
+      stage._scene.background = new THREE.Color('#f3ead7');
+      world.visible = false; room.visible = true;
+    } else if (!on && saved) {
+      cam.position.copy(saved.pos); ctl.target.copy(saved.target); cam.zoom = saved.zoom; stage._scene.background = saved.bg;
+      world.visible = true; room.visible = false; saved = null;
+    }
+    cam.updateProjectionMatrix(); ctl.update();
+  }
+
   // ---------- sky + framing ----------
   const skyTex = (() => { const c = document.createElement('canvas'); c.width = 96; c.height = 256; const g = c.getContext('2d'); const gr = g.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, '#bfe0ec'); gr.addColorStop(0.42, '#e9ecdc'); gr.addColorStop(0.7, '#f6e8cf'); gr.addColorStop(1, '#f4cfae'); g.fillStyle = gr; g.fillRect(0, 0, 96, 256); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; })();
   stage.setObject(world, { target: [0.6, -1.0, 2.2], radius: 19 });
@@ -401,6 +499,9 @@ export async function createScene(stage) {
   // ---------- per-frame ----------
   const tmp = new THREE.Vector3();
   stage.onTick = (t, dt) => {
+    // Stage B: packets fall into the BLOCKED bin; the clerk stamps each new ledger row
+    for (const b of binStack) { const u = b.userData; if (u.vy === undefined) continue; u.vy -= 14 * dt; b.position.y += u.vy * dt; b.rotation.y += dt * 4; if (b.position.y <= u.restY) { b.position.y = u.restY; b.rotation.y = 0; delete u.vy; } }
+    if (stampT > 0) { stampT = Math.max(0, stampT - dt); clerkArm.rotation.x = Math.sin((0.45 - stampT) / 0.45 * PI) * 0.9; }
     // robots walk their path
     for (const r of Object.values(robots)) {
       if (r.frozen || !r.path.length) { r.rig.position.y = 0; continue; }
@@ -491,9 +592,14 @@ export async function createScene(stage) {
     binScreen() { return toScreen(BIN.clone().add(new THREE.Vector3(-0.2, -0.3, 1.2))); },
     dropPacket() { // a red packet lands in the BLOCKED bin (stacked, capped)
       if (binStack.length >= 12) return;
-      const i = binStack.length, b = put(world, gBox(0.28, 0.2, 0.28), sparkMat.bad, 'packet', BIN.x - 0.4 + (i % 3) * 0.4, 0.82 + Math.floor(i / 6) * 0.2, BIN.z - 0.2 + (Math.floor(i / 3) % 2) * 0.4);
+      const i = binStack.length, restY = 0.82 + Math.floor(i / 6) * 0.2;
+      const b = put(world, gBox(0.28, 0.2, 0.28), sparkMat.bad, 'packet', BIN.x - 0.4 + (i % 3) * 0.4, restY + 3.2, BIN.z - 0.2 + (Math.floor(i / 3) % 2) * 0.4);
+      b.userData.restY = restY; b.userData.vy = 0; // it drops in (Stage B)
       binStack.push(b); binCount++;
     },
+    drawLedger, // (log, mode) -> redraws the chalkboard and the chain board
+    setRoom, inRoom: () => !!saved,
+    nearGate(clientX, clientY) { const p = toScreen(PLACES.gatehouse.roof); return Math.hypot(p[0] - clientX, p[1] + 60 - clientY) < 110; },
     pickRobot(clientX, clientY) {
       let best = null, bd = 60;
       for (const id of Object.keys(robots)) { const s = this.robotScreen(id); if (!s) continue; const d = Math.hypot(s[0] - clientX, s[1] - clientY + 40); if (d < bd) { bd = d; best = id; } }
