@@ -1,0 +1,24 @@
+# Secrets and local state: never committed. .env.example files are.
+.env
+*.env
+!.env.example
+gateway/.aws-credentials
+gateway/.aws-config
+scripts/probe_result.json
+replay/*.local.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node (island build inputs; island/dist is committed because the gateway serves it)
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+gateway/events.local.jsonl
+launcher/empty.ini
+infra/gateway_role.txt
