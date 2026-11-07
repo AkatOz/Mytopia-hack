@@ -27,3 +27,4 @@ infra/gateway_role.txt
 island/config.js
 launcher/.token-*
 gateway/events.*.jsonl
+scripts/scrubbed/

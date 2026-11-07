@@ -63,8 +63,8 @@ def use_ws_profile() -> None:
 
 
 def short(secret: str) -> str:
-    """Print-safe form of a secret: the first 12 characters plus '...'."""
-    return secret[:12] + "..."
+    """Print-safe form of a secret: the first 4 characters plus '...' (enough to tell two secrets apart)."""
+    return secret[:4] + "..."
 
 
 def now_iso() -> str:

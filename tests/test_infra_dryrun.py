@@ -112,5 +112,5 @@ def test_bedrock_key_replaces_the_line() -> None:
     assert bkey.replace_line("A=1\n", "AWS_BEARER_TOKEN_BEDROCK", "new") == "A=1\nAWS_BEARER_TOKEN_BEDROCK=new\n"
 
 
-def test_short_never_reveals_more_than_12_chars() -> None:
-    assert prov.short("abcdefghijklmnopqrstuvwxyz") == "abcdefghijkl..."
+def test_short_never_reveals_more_than_4_chars() -> None:
+    assert prov.short("abcdefghijklmnopqrstuvwxyz") == "abcd..."

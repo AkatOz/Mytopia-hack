@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MYTOPIA Slides</title>
+<style>
+  :root {
+    --cream: #f3ead7;
+    --paper: #fbf5e8;
+    --ink: #2b221e;
+    --orange: #f2892b;
+    --green: #3f8a56;
+    --red: #b4553e;
+    --muted: #6b5c52;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--ink); overflow: hidden; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    cursor: pointer;
+    user-select: none;
+  }
+  code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace; }
+
+  /* A fixed 1600x900 stage, scaled to fit the window by the script below. */
+  #stage {
+    position: absolute; left: 50%; top: 50%;
+    width: 1600px; height: 900px;
+    transform-origin: 0 0;
+  }
+  .slide {
+    position: absolute; inset: 0;
+    background: var(--cream);
+    border: 6px solid var(--ink);
+    padding: 64px 80px 56px;
+    display: none;
+    flex-direction: column;
+  }
+  .slide.on { display: flex; }
+  .num {
+    position: absolute; right: 36px; bottom: 26px;
+    font-size: 24px; color: var(--muted);
+  }
+  .foot {
+    position: absolute; left: 80px; bottom: 26px;
+    font-size: 22px; color: var(--muted);
+  }
+  h1 { font-size: 64px; line-height: 1.1; font-weight: 800; margin-bottom: 36px; }
+  h1 .tag { color: var(--orange); }
+  ul.b { list-style: none; }
+  ul.b li {
+    font-size: 36px; line-height: 1.3; margin-bottom: 22px;
+    padding-left: 44px; position: relative;
+  }
+  ul.b li::before {
+    content: ""; position: absolute; left: 4px; top: 15px;
+    width: 18px; height: 18px; background: var(--ink);
+  }
+  ul.b li.g::before { background: var(--green); }
+  ul.b li.r::before { background: var(--red); }
+  ul.b li.o::before { background: var(--orange); }
+  .panel {
+    background: var(--paper);
+    border: 4px solid var(--ink);
+    box-shadow: 8px 8px 0 var(--ink);
+    padding: 26px 30px;
+  }
+
+  /* Slide 1 */
+  .title-big { font-size: 168px; font-weight: 900; letter-spacing: 6px; line-height: 1; margin-top: 40px; }
+  .tagline { font-size: 50px; line-height: 1.25; margin-top: 36px; max-width: 1300px; }
+  .track {
+    display: inline-block; margin-top: 40px;
+    background: var(--orange); color: var(--ink);
+    border: 4px solid var(--ink); box-shadow: 6px 6px 0 var(--ink);
+    font-size: 40px; font-weight: 800; padding: 12px 26px;
+  }
+  .steps { font-size: 32px; margin-top: 32px; color: var(--muted); }
+  .team { margin-top: auto; display: flex; gap: 28px; }
+  .team .panel { flex: 1; padding: 18px 24px; }
+  .team b { display: block; font-size: 34px; }
+  .team span { font-size: 26px; color: var(--muted); }
+
+  /* Slide 2 */
+  .quotes { display: flex; gap: 40px; margin-top: 8px; }
+  .quote { flex: 1; border-left-width: 18px; }
+  .quote.red { border-left-color: var(--red); }
+  .quote.org { border-left-color: var(--orange); }
+  .quote p { font-size: 38px; line-height: 1.3; font-weight: 600; }
+  .quote small { display: block; font-size: 24px; color: var(--muted); margin-top: 18px; line-height: 1.3; }
+  .lead { font-size: 34px; line-height: 1.3; margin-bottom: 34px; }
+  .so { margin-top: auto; margin-bottom: 30px; font-size: 42px; font-weight: 800; }
+  .so .g { color: var(--green); }
+
+  /* Slide 3 diagram */
+  .arch { display: grid; grid-template-columns: 1fr 1.25fr 1.3fr; gap: 0; flex: 1; min-height: 0; }
+  .zone { padding: 16px 22px 18px; border: 4px solid var(--ink); background: var(--paper); display: flex; flex-direction: column; gap: 16px; }
+  .zone + .zone { border-left: none; }
+  .zone.agent { border-right: 8px dashed var(--red); }
+  .zone h3 { font-size: 26px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); }
+  .box { border: 3px solid var(--ink); background: var(--cream); padding: 10px 14px; }
+  .box b { display: block; font-size: 30px; }
+  .box span { display: block; font-size: 24px; line-height: 1.3; color: var(--muted); }
+  .box.hold { border-color: var(--red); }
+  .box.gw { border-width: 5px; border-color: var(--green); }
+  .aws { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .arrow { font-size: 26px; line-height: 1.3; }
+  .arrow b { color: var(--green); }
+  .under { display: flex; gap: 30px; margin-top: 18px; }
+  .under p { flex: 1; font-size: 28px; line-height: 1.3; }
+  .under p.limit { color: var(--red); font-weight: 700; }
+
+  /* Slide 4 */
+  .two { display: grid; grid-template-columns: 1.2fr 1fr; gap: 40px; align-items: start; flex-shrink: 0; }
+  table.svc { border-collapse: collapse; width: 100%; }
+  table.svc td { font-size: 28px; line-height: 1.22; padding: 7px 10px; border-bottom: 3px solid var(--ink); vertical-align: top; }
+  table.svc td:first-child { font-weight: 800; white-space: nowrap; padding-left: 0; width: 1%; }
+  .chain h3 { font-size: 32px; margin-bottom: 14px; }
+  .chain .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .step { border: 3px solid var(--ink); background: var(--cream); padding: 10px 12px; font-size: 24px; line-height: 1.3; text-align: center; }
+  .step b { display: block; font-size: 24px; }
+  .down { text-align: center; font-size: 30px; line-height: 1.1; }
+  .learned { font-size: 28px; line-height: 1.3; margin-top: 16px; }
+  .measured { margin-top: auto; margin-bottom: 18px; font-size: 28px; font-weight: 800; white-space: nowrap; }
+  .measured small { font-weight: 400; font-size: 22px; color: var(--muted); }
+
+  /* Slide 5 */
+  .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 30px; flex: 1; min-height: 0; }
+  .three .panel h3 { font-size: 32px; margin-bottom: 14px; }
+  .three .panel h3.r { color: var(--red); }
+  .three .panel h3.g { color: var(--green); }
+  .three ul { list-style: none; }
+  .three li { font-size: 28px; line-height: 1.3; margin-bottom: 12px; }
+  .est { color: var(--orange); font-weight: 800; }
+  .prior { margin-top: 26px; margin-bottom: 26px; font-size: 28px; line-height: 1.3; border-left: 14px solid var(--orange); padding-left: 18px; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- 1 -->
+  <section class="slide on">
+    <div class="title-big">MYTOPIA</div>
+    <div class="tagline">Pull an AI agent's badge and its next tool call is refused.</div>
+    <div><span class="track">A10 Track, Prompt 1: Agentic Identity</span></div>
+    <div class="steps">Authenticate an agent &middot; allow selected MCP tools &middot; revoke mid-task &middot; block what follows</div>
+    <div class="team">
+      <div class="panel"><b>Bob</b><span>gateway, identity, AWS</span></div>
+      <div class="panel"><b>Ozi</b><span>the island</span></div>
+      <div class="panel"><b>Teammate #3</b><span>agent, launcher, business</span></div>
+    </div>
+    <div class="num">1 / 5</div>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide">
+    <h1>The problem</h1>
+    <p class="lead">Agents run on a developer's key or a shared service account. No one can list them, scope them, or stop one without stopping all.</p>
+    <div class="quotes">
+      <div class="panel quote red">
+        <p>&ldquo;revoked tokens will still be valid if they are verified using any JWT library that verifies the signature and expiration of the token.&rdquo;</p>
+        <small>Amazon Cognito developer guide, token revocation</small>
+      </div>
+      <div class="panel quote org">
+        <p>&ldquo;model behavior is not a security control.&rdquo;</p>
+        <small>A10 Networks, AI agent security controls (Oct 2026), quoting Anthropic. A team must show what an agent can access, how it is authorized, how it is stopped.</small>
+      </div>
+    </div>
+    <div class="so">So revocation lives in the gateway, <span class="g">on every call.</span></div>
+    <div class="num">2 / 5</div>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide">
+    <h1>Architecture and trust boundaries</h1>
+    <div class="arch">
+      <div class="zone agent">
+        <h3>Agent (untrusted)</h3>
+        <div class="box"><b>Strands agent</b><span>Nova 2 Lite, temperature 0</span></div>
+        <div class="box hold"><b>Holds only</b><span>a 5-minute Cognito token (rotated every 4 min)<br>a Bedrock-only bearer token</span></div>
+        <div class="arrow"><b>&rarr;</b> gateway <code>/mcp</code><br><b>&rarr;</b> Bedrock model endpoint<br>its credentials open nothing else</div>
+      </div>
+      <div class="zone">
+        <h3>Operator laptop</h3>
+        <div class="box hold"><b>Launcher</b><span>holds the client secret; mints tokens; kills the process tree on KILLED</span></div>
+        <div class="box gw"><b>Gateway</b><span>verify token (JWKS) &rarr; read badge (consistent) &rarr; <code>decide()</code> &rarr; log</span></div>
+        <div class="box"><b>Island</b><span>reads <code>/events</code>; four buttons only POST</span></div>
+      </div>
+      <div class="zone">
+        <h3>AWS us-east-1</h3>
+        <div class="aws">
+          <div class="box"><b>Cognito</b><span>1 app client per agent</span></div>
+          <div class="box"><b>Bedrock</b><span>the agent's model</span></div>
+          <div class="box"><b>DynamoDB</b><span>badges: Get / Update</span></div>
+          <div class="box"><b>DynamoDB</b><span>log: Put / Query only</span></div>
+          <div class="box"><b>Lambda</b><span>six fake tools</span></div>
+          <div class="box hold"><b>Gateway role</b><span>these three, nothing else</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="under">
+      <p>Log: SHA-256 hash chain, conditional PutItem. Tamper-evident, not tamper-proof.</p>
+      <p class="limit">Limit: agent and gateway share one OS user on this laptop; production separates them.</p>
+    </div>
+    <div class="num">3 / 5</div>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide">
+    <h1>AWS, and what we learned</h1>
+    <div class="two">
+      <div>
+        <table class="svc">
+          <tr><td>Cognito</td><td>one app client per agent; 5-min tokens from <code>GetClientToken</code>, no domain</td></tr>
+          <tr><td>DynamoDB</td><td>badge read on every call is the kill switch; append-only log</td></tr>
+          <tr><td>Lambda</td><td>six tools, invoked by the gateway's role; the agent has no key for it</td></tr>
+          <tr><td>Bedrock</td><td>Nova 2 Lite through Strands; agent holds no AWS keys</td></tr>
+          <tr><td>IAM / STS</td><td>narrow role from session keys, 1-hour sessions, re-assumed before expiry</td></tr>
+        </table>
+        <p class="learned"><b>Learned:</b> Cognito cannot revoke a machine token. An API Gateway authorizer never sees the tool name in the body. So the decision lives in our gateway.</p>
+      </div>
+      <div class="panel chain">
+        <h3>Rule: no long-lived IAM keys</h3>
+        <div class="row">
+          <div class="step"><b>Workshop session keys</b>expire in hours</div>
+          <div class="step"><b>Workshop session keys</b>same file</div>
+        </div>
+        <div class="row"><div class="down">&darr;</div><div class="down">&darr;</div></div>
+        <div class="row">
+          <div class="step"><b>credential_process</b>AssumeRole, 1 h, re-run before expiry</div>
+          <div class="step"><b>Bedrock token</b>Bedrock only, 12 h max</div>
+        </div>
+        <div class="row"><div class="down">&darr;</div><div class="down">&darr;</div></div>
+        <div class="row">
+          <div class="step"><b>Gateway</b>2 tables, 1 function</div>
+          <div class="step"><b>Agent</b>model calls only</div>
+        </div>
+      </div>
+    </div>
+    <div class="measured">Measured: about 160-180 ms per decision &middot; 494 ms revoke to refusal &middot; token still valid 254 s <small>(docs/LIVE_RUN.md)</small></div>
+    <div class="num">4 / 5</div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide">
+    <h1>Business, limits, next</h1>
+    <div class="three">
+      <div class="panel">
+        <h3>Who and price</h3>
+        <ul>
+          <li>Platform and security teams letting agents use MCP tools. CISO buys, on-call uses.</li>
+          <li><span class="est">Estimate:</span> free to 100k decisions/month; about $99/month team tier; per-agent enterprise.</li>
+          <li><span class="est">Estimate:</span> AWS about $4 to $25 per million decisions, set by calls per token.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3 class="r">Honest limits</h3>
+        <ul>
+          <li>A call already past the check completes.</li>
+          <li>Admin token is a demo shortcut.</li>
+          <li>Client secret in a file stands in for attested workload identity.</li>
+          <li>Next: separate agent sandbox, Streams instead of polling, task-scoped badges, AgentCore path.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3 class="g">Built vs used</h3>
+        <ul>
+          <li>Built this weekend: gateway, launcher, agent, tools, infra, island scene. Claude Code wrote the engine.</li>
+          <li>Used: Ozi's earlier Mytopia renderer (island/ASSETS.md), three.js (MIT), two OFL fonts, AWS.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="prior">Prior art: Kong, LiteLLM, Cloudflare, AgentCore. We add the per-call badge read as the kill switch, and the island as the wall display.</p>
+    <div class="num">5 / 5</div>
+  </section>
+
+</div>
+<script>
+  (function () {
+    var slides = document.querySelectorAll('.slide');
+    var stage = document.getElementById('stage');
+    var i = 0;
+    function fit() {
+      var s = Math.min(window.innerWidth / 1600, window.innerHeight / 900);
+      stage.style.transform = 'scale(' + s + ') translate(-50%, -50%)';
+    }
+    function show(n) {
+      i = Math.max(0, Math.min(slides.length - 1, n));
+      for (var k = 0; k < slides.length; k++) slides[k].classList.toggle('on', k === i);
+    }
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ' || e.key === 'Enter') { show(i + 1); e.preventDefault(); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp' || e.key === 'Backspace') { show(i - 1); e.preventDefault(); }
+      else if (e.key === 'Home') show(0);
+      else if (e.key === 'End') show(slides.length - 1);
+    });
+    document.addEventListener('click', function (e) {
+      if (e.clientX < window.innerWidth * 0.2) show(i - 1); else show(i + 1);
+    });
+    window.addEventListener('resize', fit);
+    fit();
+  })();
+</script>
+</body>
+</html>

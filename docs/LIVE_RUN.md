@@ -56,6 +56,6 @@ launcher: run-0ffe stopped, exit 1 (killed by harness)
 ## Numbers to say on stage
 
 - Gateway decision time: about 160 to 180 ms per call, nearly all of it the strongly consistent DynamoDB read from the laptop to us-east-1 (local-mode runs show 1 to 3 ms).
-- Revoke to first refused call: 494 ms in this run (it is wherever the agent is in its 3-second poll, so 0.5 to 3 s).
+- Revoke to first refused call: 494 ms in this run (it is wherever the agent is in its poll cycle, which with the 2-second demo pace is about 5.4 s long, so anywhere from near zero to about 5 s).
 - Kill to process gone: about 1.3 s (the launcher's 1-second status poll plus `taskkill /T /F`).
 - Token still valid at the moment of refusal: 254 s. Cognito could not have revoked it; the gateway did not need to.

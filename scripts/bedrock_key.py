@@ -44,7 +44,7 @@ def main() -> int:
             text = f.read()
     with open(AGENT_ENV, "w", encoding="utf-8", newline="\n") as f:
         f.write(replace_line(text, KEY, token))
-    print(f"wrote {KEY}={token[:20]}... into {AGENT_ENV}")
+    print(f"wrote {KEY}={token[:8]}... into {AGENT_ENV}")
     return 0
 
 

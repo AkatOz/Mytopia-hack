@@ -22,6 +22,8 @@ from gateway.tools import ToolRunner, text_result
 DEFAULT_PROTOCOL_VERSION = "2025-11-25"
 TOOL_NAMES = ("read_file", "search_files", "create_issue", "list_issues", "send_email", "delete_file")
 WWW_AUTHENTICATE = {"WWW-Authenticate": 'Bearer error="invalid_token"'}
+MAX_BODY_BYTES = 1_000_000   # one JSON-RPC request; anything bigger is refused before the token is even read
+MAX_LABEL_CHARS = 64         # caller-chosen text (X-Run-Id, Mcp-Name) is cut to this before it reaches the log
 
 
 def args_summary(arguments: dict) -> str:
@@ -94,7 +96,9 @@ class McpHandler:
     def log(self, **fields: Any) -> dict:
         """Append one event (adding ms_since_revoke on the first deny after a revoke) and print one stderr line."""
         agent = fields.get("agent", "unknown")
-        if fields.get("decision") == "deny" and agent in self.revoked_at_ms:
+        # only a verified badge deny counts: a forged token only names its agent, so it must not stop the clock
+        if (fields.get("decision") == "deny" and str(fields.get("rule", "")).startswith("status-")
+                and agent in self.revoked_at_ms):
             fields["ms_since_revoke"] = int(time.time() * 1000) - self.revoked_at_ms.pop(agent)
         record = self.events.append(**fields)
         if record["decision"] in ("allow", "deny"):
@@ -112,14 +116,19 @@ class McpHandler:
 
     async def post(self, request: Request) -> Response:
         started = time.perf_counter()
+        raw = b""
+        async for chunk in request.stream():
+            raw += chunk
+            if len(raw) > MAX_BODY_BYTES:
+                return rpc_error(None, -32600, f"request larger than {MAX_BODY_BYTES} bytes", status=413)
         try:
-            message = json.loads(await request.body())
+            message = json.loads(raw)
             method = str(message["method"])
         except (ValueError, KeyError, TypeError):
             return rpc_error(None, -32700, "parse error: expected one JSON-RPC request", status=400)
         msg_id = message.get("id")
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
-        run_id = request.headers.get("x-run-id") or "run-unknown"
+        run_id = (request.headers.get("x-run-id") or "run-unknown")[:MAX_LABEL_CHARS]
         tool_label = params.get("name") if params.get("name") in TOOL_NAMES else "tools/list"
 
         try:
@@ -194,7 +203,11 @@ class McpHandler:
         arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
         header_name = request.headers.get("mcp-name")
         if header_name is not None and header_name != name:
-            decision = Decision(False, "header-mismatch", f"Mcp-Name header {header_name} does not match tool {name}")
+            decision = Decision(False, "header-mismatch",
+                                f"Mcp-Name header {header_name[:MAX_LABEL_CHARS]} does not match tool {name[:MAX_LABEL_CHARS]}")
+        elif name not in TOOL_NAMES:
+            # closed tool set; also stops a call named "tools/list" from passing decide()'s listing sentinel
+            decision = Decision(False, "allow-list", f"{name[:MAX_LABEL_CHARS]} is not a tool this gateway serves")
         else:
             try:
                 row = await run_in_threadpool(self.registry.get, token.agent_id)

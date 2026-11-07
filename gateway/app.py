@@ -11,6 +11,7 @@ from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
@@ -24,6 +25,10 @@ from gateway.tokens import CognitoVerifier, LocalVerifier, TokenError
 from gateway.tools import LambdaTools, LocalTools
 
 LOCALHOST_ORIGINS = r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"
+# Host headers the gateway answers; anything else (a DNS-rebinding page whose name points at 127.0.0.1) gets 400.
+# "testserver" is Starlette's TestClient host; a browser cannot be made to send it.
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]", "testserver"]
+DEFAULT_SECRETS = {"change-me", "change-me-too"}
 ADMIN_ACTIONS = {"revoke": ("REVOKED", "revoked", "badge REVOKED by operator"),
                  "restore": ("ACTIVE", "restored", "badge ACTIVE again"),
                  "kill": ("KILLED", "kill_requested", "status KILLED by operator")}
@@ -77,6 +82,11 @@ def create_app(settings: Settings) -> Starlette:
     """Build the whole gateway for these settings."""
     handler = build_handler(settings)
     registry, events = handler.registry, handler.events
+    if settings.admin_token in DEFAULT_SECRETS:
+        print("gateway: WARNING ADMIN_TOKEN is the default value; set a random one in gateway/.env and agent/.env",
+              file=sys.stderr)
+    if settings.token_mode == "local" and settings.local_issuer_secret in DEFAULT_SECRETS:
+        print("gateway: WARNING LOCAL_ISSUER_SECRET is the default value; anyone can mint local tokens", file=sys.stderr)
 
     def is_admin(request: Request) -> bool:
         given = request.headers.get("x-admin-token", "")
@@ -204,6 +214,9 @@ def create_app(settings: Settings) -> Starlette:
                              "token_mode": settings.token_mode})
 
     async def config_js(request: Request) -> Response:
+        # A <script src> from another site is not stopped by CORS; the browser labels it, so refuse it here.
+        if request.headers.get("sec-fetch-site") == "cross-site":
+            return Response("// refused: cross-site", status_code=403, media_type="application/javascript")
         body = (f"window.MYTOPIA = {{api: \"\", adminToken: {json.dumps(settings.admin_token)}, "
                 f"pollMs: 1000, staleAfterMs: 3000}};\n")
         return Response(body, media_type="application/javascript", headers={"Cache-Control": "no-store"})
@@ -227,12 +240,16 @@ def create_app(settings: Settings) -> Starlette:
         Route("/config.js", config_js, methods=["GET"]),
         Route("/table.html", table_html, methods=["GET"]),
     ]
+    replay_dir = Path(__file__).resolve().parent.parent / "replay"
+    if replay_dir.is_dir():  # recordings only (JSON); lets the island play /replay/demo.json with no second server
+        routes.append(Mount("/replay", app=StaticFiles(directory=replay_dir)))
     island = static_dir(settings)
     if island is not None:
         routes.append(Mount("/", app=StaticFiles(directory=island, html=True)))
     else:
         routes.append(Route("/", table_html, methods=["GET"]))
-    middleware = [Middleware(CORSMiddleware, allow_origin_regex=LOCALHOST_ORIGINS, allow_methods=["*"],
+    middleware = [Middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS),
+                  Middleware(CORSMiddleware, allow_origin_regex=LOCALHOST_ORIGINS, allow_methods=["*"],
                              allow_headers=["*"], expose_headers=["WWW-Authenticate"])]
     app = Starlette(routes=routes, middleware=middleware)
     app.state.handler = handler

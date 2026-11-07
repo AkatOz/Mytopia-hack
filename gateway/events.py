@@ -57,6 +57,8 @@ def load_last_chain(jsonl_path: Path | None) -> tuple[str, list[dict]]:
             if row.get("pk") != chain:
                 chain, records = row.get("pk"), []
             records.append({k: v for k, v in row.items() if k != "pk"})
+    if chain is not None and not verify_chain(records):
+        print(f"events: chain {chain} in {jsonl_path} does not verify; starting a new chain", file=sys.stderr)
     if chain is None or not verify_chain(records):
         return new_chain_id(chain), []
     return chain, records
@@ -80,7 +82,8 @@ class MemoryEventLog:
             record["hash"] = record_hash(record)
             self._records.append(record)
             chain = self.chain
-        self._write_jsonl(chain, record)
+            # inside the lock: two concurrent calls must reach the JSONL twin in seq order, or a restart cannot resume
+            self._write_jsonl(chain, record)
         self._store_durable(chain, record)
         return dict(record)
 
