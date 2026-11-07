@@ -23,3 +23,9 @@ Island at `island/` as merged from branch `island` (commit 93869f9). Run in the 
 - Nothing failed. Stage B (ledger room, bin packets, Save replay) can start whenever you like; the live integration has passed.
 - When the gateway restarts without `/demo/reset`, `seq` continues from the JSONL twin, so the island's cursor stays valid; `GET /events` also carries a `chain` key that changes only on reset.
 - The gateway labels token failures and unknown tool names as `tools/list` (the gatehouse), never a tool name outside the six.
+
+## Stage B check (2:05 PM PT, island commit f07d592 merged as 63a5a01)
+
+- Ledger room (`G` or click the gatehouse): opened on the live gateway mid-activity; the chalkboard listed the last seven decisions (seq 35 to 41: RESTORED, ALLOW read_file, REVOKED, DENY read_file, DENY tools/list, DENY read_file, RESTORED) with the hash-chain board beside it and the clerk at the desk; `Esc` returned to the island. Those seven rows were the bypass-proof script's real calls against the gateway at that moment, so the room shows the live log, not a copy. PASS.
+- Wording: the island files say nothing wrong, but on stage the chain is "tamper-evident", never "tamper-proof" (a judge will test the difference).
+- Not yet exercised here: SAVE REPLAY (the island's own test covers it; the gateway-side recording `replay/demo.json` exists regardless).
