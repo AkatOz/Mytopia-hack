@@ -1,0 +1,123 @@
+<!doctype html>
+<!-- The fallback face of MYTOPIA: a plain, sortable table of GET /events with the four operator buttons.
+     It polls with a cursor, shows LIVE or STALE from poll health, and posts with the X-Admin-Token from /config.js. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MYTOPIA table</title>
+<script src="/config.js"></script>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; background: #fafaf7; color: #222; }
+  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  h1 { font-size: 18px; margin: 0 12px 0 0; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-weight: bold; color: #fff; }
+  .live { background: #2e7d32; } .stale { background: #b71c1c; }
+  button { font-weight: bold; padding: 4px 10px; cursor: pointer; }
+  #msg { color: #555; }
+  .wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; background: #fff; }
+  th, td { border: 1px solid #ddd; padding: 3px 6px; text-align: left; white-space: nowrap; }
+  th { background: #eee; cursor: pointer; user-select: none; }
+  tr.deny td { background: #fdecea; } tr.allow td { background: #f1f8e9; }
+  tr.admin td { background: #fff8e1; } td.reason { white-space: normal; min-width: 240px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MYTOPIA gateway log</h1>
+  <span id="health" class="badge stale">STALE</span>
+  <label>agent <select id="agent"><option>research-bot</option><option>ops-bot</option></select></label>
+  <button data-action="revoke">REVOKE</button>
+  <button data-action="restore">RESTORE</button>
+  <button data-action="kill">KILL</button>
+  <button data-action="reset">RESET</button>
+  <span id="msg"></span>
+</header>
+<div class="wrap"><table>
+  <thead><tr id="head"></tr></thead>
+  <tbody id="rows"></tbody>
+</table></div>
+<script>
+const CFG = window.MYTOPIA || {api: "", adminToken: "", pollMs: 1000, staleAfterMs: 3000};
+const COLS = ["seq", "ts", "agent", "agent_mode", "tool", "decision", "rule", "args_summary", "reason",
+              "latency_ms", "ms_since_revoke", "run_id"];
+let events = [];          // every event of the current chain, applied once per seq
+let cursor = 0;           // highest seq seen
+let chain = null;         // reset the table when the gateway starts a new chain
+let lastOk = 0;           // time of the last successful poll
+let sortCol = "seq", sortDesc = true;
+
+function renderHead() {
+  document.getElementById("head").innerHTML = COLS.map(c =>
+    `<th data-col="${c}">${c}${c === sortCol ? (sortDesc ? " v" : " ^") : ""}</th>`).join("");
+}
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"]/g, ch => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[ch]));
+}
+
+function renderRows() {
+  const rows = [...events].sort((a, b) => {
+    const x = a[sortCol], y = b[sortCol];
+    const cmp = (typeof x === "number" && typeof y === "number") ? x - y : String(x ?? "").localeCompare(String(y ?? ""));
+    return sortDesc ? -cmp : cmp;
+  });
+  document.getElementById("rows").innerHTML = rows.map(e => {
+    const kind = e.decision === "allow" ? "allow" : e.decision === "deny" ? "deny" : "admin";
+    return `<tr class="${kind}">` + COLS.map(c => `<td class="${c}">${esc(e[c])}</td>`).join("") + "</tr>";
+  }).join("");
+}
+
+async function poll() {
+  try {
+    const r = await fetch(`${CFG.api}/events?since_seq=${cursor}`, {cache: "no-store"});
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    if (data.chain && data.chain !== chain) {   // new chain: drop the old rows and re-read it from seq 0
+      const first = chain === null; chain = data.chain; events = []; renderRows();
+      if (!first && cursor > 0) { cursor = 0; return poll(); }
+      cursor = 0;
+    }
+    for (const e of data.events) {
+      if (e.seq > cursor) { events.push(e); cursor = e.seq; }
+    }
+    lastOk = Date.now();
+    if (data.events.length) renderRows();
+    if (data.events.length === 200) setTimeout(poll, 0);   // more pages waiting
+  } catch (err) { /* STALE shows the problem */ }
+}
+
+function updateHealth() {
+  const live = Date.now() - lastOk < CFG.staleAfterMs;
+  const el = document.getElementById("health");
+  el.textContent = live ? "LIVE" : "STALE";
+  el.className = "badge " + (live ? "live" : "stale");
+}
+
+async function act(action) {
+  const agent = document.getElementById("agent").value;
+  const url = action === "reset" ? "/demo/reset" : `/agents/${agent}/${action}`;
+  const msg = document.getElementById("msg");
+  msg.textContent = `${action.toUpperCase()} sent...`;
+  try {
+    const r = await fetch(CFG.api + url, {method: "POST", headers: {"X-Admin-Token": CFG.adminToken}});
+    msg.textContent = `${action.toUpperCase()}: HTTP ${r.status} ${JSON.stringify(await r.json())}`;
+  } catch (err) { msg.textContent = `${action.toUpperCase()} failed: ${err}`; }
+}
+
+document.getElementById("head").addEventListener("click", ev => {
+  const col = ev.target.dataset.col;
+  if (!col) return;
+  sortDesc = col === sortCol ? !sortDesc : false;
+  sortCol = col;
+  renderHead(); renderRows();
+});
+document.querySelectorAll("button[data-action]").forEach(b => b.addEventListener("click", () => act(b.dataset.action)));
+renderHead();
+poll();
+setInterval(poll, CFG.pollMs);
+setInterval(updateHealth, 250);
+</script>
+</body>
+</html>
