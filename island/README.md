@@ -17,7 +17,7 @@ python3 -m http.server 5300
 # live:    put a config.js next to index.html (copy config.example.js), start the gateway or tools/mock_gateway.py, open island/index.html
 ```
 
-When served by the gateway at `http://127.0.0.1:8787/`, the gateway's own `/config.js` is used. Keys: **T** shows the event table, **R** replays the fixture, **Esc** closes overlays. Tests: `node --test island/tests/*.test.mjs`.
+When served by the gateway at `http://127.0.0.1:8787/`, the gateway's own `/config.js` is used. Keys: **G** (or click the gatehouse) opens the gatehouse ledger room, **T** shows the event table, **R** replays the fixture, **Esc** closes overlays or leaves the room. **SAVE REPLAY** downloads every event seen as `{"events":[...]}`, which plays back with `?replay=<file>`. Tests: `node --test island/tests/*.test.mjs`.
 
 ## Files a judge will open
 
@@ -26,7 +26,7 @@ When served by the gateway at `http://127.0.0.1:8787/`, the gateway's own `/conf
 | `index.html` | the page: paper HUD panels, CSS, the import map for the vendored three.js |
 | `src/reducer.js` | the only logic: `apply(state, event)` → new state + effects; badge rule; dedupe |
 | `src/main.js` | wiring: live polling / replay, the effects queue, the HUD, the four buttons, keys |
-| `src/scene.js` | the three.js island: buildings, gatehouse, robots, plates, lamps, sparks, smoke, fire |
+| `src/scene.js` | the three.js island: buildings, gatehouse, robots, plates, lamps, sparks, smoke, fire, and the gatehouse ledger room |
 | `three-d-stage.js` | Mytopia's renderer component (pre-existing, unchanged) |
 | `tests/reducer.test.mjs` | the fixture run through the reducer |
 
@@ -42,3 +42,11 @@ When served by the gateway at `http://127.0.0.1:8787/`, the gateway's own `/conf
 8. The buttons only POST to the gateway and show "sent...". The plate turns red only when the gateway's `revoked` event comes back through polling.
 9. In REPLAY the buttons are disabled, so a recording can never look like it controls anything.
 10. If the gateway stops, the scene freezes as it was and the badge says STALE. Nothing is ever invented on the client.
+
+## Stage B (after the live integration passed)
+
+- **Walking robots:** a robot walks through the arch to the building of its latest allowed call, and back to the gate on a deny.
+- **Gatehouse ledger room:** press G or click the gatehouse. An iris wipe opens a cutaway room. The chalkboard lists the last seven decisions from the same event log (allow in green, deny in red, admin in amber), the paper board beside it shows the hash chain (each row names the hash of the one before it), and the clerk robot stamps every new row. It is drawn from `state.log` and decides nothing.
+- **BLOCKED bin:** each denied call drops a red packet into the bin by the gate.
+- **Click a robot:** shows the raw JSON of its latest event.
+- **Save replay:** downloads every event seen, so a clean live run can become the backup recording.

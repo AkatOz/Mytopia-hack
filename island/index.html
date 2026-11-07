@@ -75,6 +75,13 @@ three-d-stage:not(:defined) { visibility: hidden; }
 #ops button[data-act=revoke] { background: #f6dfd8; } #ops button[data-act=kill] { background: #f3c3b6; }
 #ops button[data-act=restore] { background: #dfeedf; }
 #ops button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+#ops button.save { background: var(--cream); font-size: 15px; }
+#roomtitle { top: 60px; left: 12px; padding: 4px 12px; font-size: 18px; display: none; }
+#roomtitle button { font: inherit; margin-left: 10px; border: 2px solid var(--ink); background: var(--orange); cursor: pointer; }
+body.room #roomtitle { display: block; } body.room #overlay { display: none; }
+#iris { position: fixed; inset: 0; z-index: 9; pointer-events: none; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#iris div { width: 300vmax; height: 300vmax; border-radius: 50%; box-shadow: 0 0 0 300vmax var(--ink); flex: none; transition: width .35s ease-in, height .35s ease-in; }
+#iris.shut div { width: 0; height: 0; }
 #ops .hint { font-family: var(--vt); font-size: 16px; color: var(--dim); margin-top: 6px; }
 
 /* things drawn over the 3D scene */
@@ -101,7 +108,14 @@ three-d-stage:not(:defined) { visibility: hidden; }
 /* about 800 px wide: the terminal takes the right 38 percent of the projector */
 @media (max-width: 900px) {
   #banner { font-size: 32px; } #card { width: 250px; font-size: 13px; } #card h2 { font-size: 18px; }
-  #ops { width: 146px; top: 70px; padding: 8px; } #ops .count { font-size: 38px; } #ops .lbl, #ops .for, #ops .hint { font-size: 15px; } #ops button { font-size: 14px; padding: 3px 6px; margin: 4px 0; }
+  #ops { width: 146px; top: 70px; padding: 8px; } #ops .count { font-size: 38px; } #ops .lbl, #ops .for, #ops button.save { background: var(--cream); font-size: 15px; }
+#roomtitle { top: 60px; left: 12px; padding: 4px 12px; font-size: 18px; display: none; }
+#roomtitle button { font: inherit; margin-left: 10px; border: 2px solid var(--ink); background: var(--orange); cursor: pointer; }
+body.room #roomtitle { display: block; } body.room #overlay { display: none; }
+#iris { position: fixed; inset: 0; z-index: 9; pointer-events: none; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+#iris div { width: 300vmax; height: 300vmax; border-radius: 50%; box-shadow: 0 0 0 300vmax var(--ink); flex: none; transition: width .35s ease-in, height .35s ease-in; }
+#iris.shut div { width: 0; height: 0; }
+#ops .hint { font-size: 15px; } #ops button { font-size: 14px; padding: 3px 6px; margin: 4px 0; }
   #mode { font-size: 22px; } .tag.place { font-size: 16px; }
   #ticker { font-size: 18px; } .bubble { font-size: 16px; max-width: 200px; } .stamp { font-size: 28px; }
   .sheet { inset: 56px 190px 60px 10px; }
@@ -136,11 +150,14 @@ three-d-stage:not(:defined) { visibility: hidden; }
   <button data-act="restore">RESTORE</button>
   <button data-act="kill">KILL</button>
   <button data-act="reset">RESET</button>
-  <div class="hint">T table · R replay · Esc close</div>
+  <button data-act="save" class="save">SAVE REPLAY</button>
+  <div class="hint">G gatehouse ledger · T table · R replay · Esc back</div>
 </div>
 
 <div id="ticker" class="hud paper"><span class="line">waiting for the gateway…</span></div>
 
+<div id="roomtitle" class="hud paper"><b>GATEHOUSE</b> · the ledger, every call in order <button id="back">← island (Esc)</button></div>
+<div id="iris"><div></div></div>
 <div id="table" class="sheet paper"><h3>Every event seen</h3><table><thead><tr><th>seq</th><th>ts</th><th>agent</th><th>tool</th><th>decision</th><th>rule</th><th>reason</th><th>latency_ms</th></tr></thead><tbody id="t-body"></tbody></table></div>
 <div id="json" class="sheet paper"><h3 id="j-title">Latest event</h3><pre id="j-body"></pre></div>
 

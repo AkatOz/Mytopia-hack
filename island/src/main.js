@@ -57,6 +57,7 @@ function ingest(events) {
     if (['revoked', 'restored', 'kill_requested', 'run_started'].includes(ev.decision) && source === 'live') loadAgents();
     if (ev.decision === 'run_started') uiSel = null;
   });
+  if (events.length) scene.drawLedger(state.log, source);
   render();
 }
 
@@ -80,6 +81,7 @@ function render() {
   $('o-for').textContent = `acts on: ${a.id}`;
   for (const b of document.querySelectorAll('#ops button')) {
     const act = b.dataset.act;
+    if (act === 'save') { b.disabled = !state.log.length; continue; }
     b.disabled = source === 'replay' || !!pendingBtn[act];
     b.textContent = pendingBtn[act] ? 'sent...' : act.toUpperCase();
   }
@@ -145,7 +147,15 @@ async function replay(path) {
 }
 
 // ---------- the four buttons: POST and wait for the event ----------
+// Save replay (Stage B): every event seen, as a file the island can play back with ?replay=<file>
+function saveReplay() {
+  const blob = new Blob([JSON.stringify({ events: state.log }, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `mytopia-replay-${(state.log[0]?.ts || 'empty').slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 async function press(act) {
+  if (act === 'save') return saveReplay();
   if (source === 'replay' || pendingBtn[act]) return;
   const id = selected();
   const url = act === 'reset' ? `${cfg.api}/demo/reset` : `${cfg.api}/agents/${encodeURIComponent(id)}/${act}`;
@@ -162,14 +172,27 @@ async function press(act) {
 $('ops').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (b) press(b.dataset.act); });
 $('tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-agent]'); if (b) { uiSel = b.dataset.agent; render(); } });
 
+// ---------- Stage B: the gatehouse ledger room, entered through an iris wipe ----------
+let irisBusy = false;
+async function room(on) {
+  if (irisBusy || scene.inRoom() === on) return;
+  irisBusy = true; $('iris').classList.add('shut'); await sleep(380);
+  scene.setRoom(on); document.body.classList.toggle('room', on); scene.drawLedger(state.log, source);
+  $('iris').classList.remove('shut'); await sleep(380); irisBusy = false;
+}
+$('back').addEventListener('click', () => room(false));
+
 // ---------- keyboard and robot click ----------
 addEventListener('keydown', (e) => {
   if (e.key === 't' || e.key === 'T') { $('json').classList.remove('on'); $('table').classList.toggle('on'); renderTable(); }
   else if (e.key === 'r' || e.key === 'R') { const p = replayPath || 'fixture.json'; location.search = `?replay=${encodeURIComponent(p)}`; }
-  else if (e.key === 'Escape') { $('table').classList.remove('on'); $('json').classList.remove('on'); }
+  else if (e.key === 'g' || e.key === 'G') room(!scene.inRoom());
+  else if (e.key === 'Escape') { const open = $('table').classList.contains('on') || $('json').classList.contains('on'); $('table').classList.remove('on'); $('json').classList.remove('on'); if (!open) room(false); }
 });
 document.querySelector('three-d-stage').addEventListener('click', (e) => {
-  const id = scene.pickRobot(e.clientX, e.clientY); if (!id) return;
+  if (scene.inRoom()) return;
+  const id = scene.pickRobot(e.clientX, e.clientY);
+  if (!id) { if (scene.nearGate(e.clientX, e.clientY)) room(true); return; }
   uiSel = id; render();
   const ev = [...state.log].reverse().find((x) => x.agent === id);
   $('j-title').textContent = `${state.agents[id]?.name || id}: latest event`;
