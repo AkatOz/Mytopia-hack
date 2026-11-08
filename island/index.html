@@ -212,9 +212,12 @@ button.chip.grant:hover { background: var(--good-bg); }
 #pill { position: fixed; z-index: 7; left: 12px; bottom: 12px; padding: 2px 10px; font: 18px var(--vt); cursor: pointer; display: none; }
 body.naked .hud, body.naked #overlay, body.naked #inquest, body.naked .sheet { display: none !important; }
 body.naked #pill { display: block !important; }
-/* the inquest panel: paper, 300 px, over the bay screen; its lines type themselves one every 0.4 s */
-#inquest { position: fixed; z-index: 6; display: none; width: 300px; padding: 6px 10px 8px; background: var(--paper); border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); font-family: var(--vt); font-size: 17px; line-height: 1.12; pointer-events: auto; }
-#inquest h4 { margin: 0 0 4px; font: 600 16px var(--px); letter-spacing: 1px; border-bottom: 2px solid var(--ink); padding-bottom: 2px; }
+/* the inquest panel: paper, in the agent card's place (bottom-left) while an inspection is open; its lines type
+   themselves one every 0.4 s; Esc closes it and the card comes back (integrator: anchored over the bay it covered the plaza) */
+#inquest { position: fixed; z-index: 6; display: none; left: 12px; bottom: 60px; width: 320px; max-height: calc(100vh - 150px); overflow-y: auto; padding: 6px 10px 8px; background: var(--paper); border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); font-family: var(--vt); font-size: 17px; line-height: 1.12; pointer-events: auto; }
+body.inquest #card { display: none; }
+#inquest h4 { margin: 0 0 4px; font: 600 16px var(--px); letter-spacing: 1px; border-bottom: 2px solid var(--ink); padding-bottom: 2px; display: flex; justify-content: space-between; align-items: baseline; }
+#inquest h4 small { font: 15px var(--vt); color: var(--dim); letter-spacing: 0; }
 #inquest ul { list-style: none; margin: 0; padding: 0; }
 #inquest li { display: flex; gap: 6px; } #inquest li span { flex: none; width: 12px; }
 #inquest li.ok span { color: var(--good); } #inquest li.no span { color: var(--bad); } #inquest li.na span { color: var(--dim); }
@@ -295,7 +298,7 @@ body.room #inquest { display: none !important; }
   .tierline { font-size: 15px; } .tierline .arrows button { width: 18px; height: 17px; font-size: 11px; }
   #agent, #office { inset: 52px 10px 56px 10px; width: auto; transform: none; } #office .cols { grid-template-columns: 1fr; }
   #help { inset: 10px; width: auto; transform: none; } #help li { font-size: 18px; } #help .keys { grid-template-columns: 1fr 1fr; font-size: 17px; }
-  #inquest { width: 260px; font-size: 15px; }
+  #inquest { width: 252px; font-size: 15px; }
 }
 @media (max-height: 640px) {
   #ops button { padding: 2px 4px; } #ops .hint { display: none; } #ops .save { display: none; }

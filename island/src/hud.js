@@ -249,7 +249,9 @@ export function createHud(scene, io) {
       + `<dt>identity</dt><dd>client ${esc(a.clientId || '—')} · made by ${a.madeBy === 'factory' ? 'the Factory' : 'the seed (demo badge)'}</dd></dl>`
       + `<div class="lbl">the badge: click a tool to give it or take it away</div><div class="chips">${chipsHtml(a, ui)}</div>`
       + `<table class="verbs"><thead><tr><th>tool</th><th>what it does</th><th>this badge</th><th>allowed</th><th>refused</th></tr></thead><tbody>${rows}</tbody></table>`
-      + `<div class="acts">${btn('revoke', 'REVOKE', 'take the badge away now')}${btn('restore', 'RESTORE', 'give the badge back')}${btn('kill', 'KILL', 'stop the running program')}</div>`);
+      + `<div class="acts">${btn('revoke', 'REVOKE', 'take the badge away now')}${btn('restore', 'RESTORE', 'give the badge back')}${btn('kill', 'KILL', 'stop the running program')}</div>`
+      // a robot in the bay can be inspected again (the panel closes when another inspection starts or the card is wanted back)
+      + (a.at === 'bay' ? `<div class="acts"><div class="act"><button data-ui="inspect">INSPECTION</button><span>show the inquest the bay ran on it</span></div></div>` : ''));
     const ev = [...state.log].reverse().find((x) => x.agent === a.id);
     const raw = ev ? JSON.stringify(ev, null, 2) : 'no event yet';
     if ($('a-json').textContent !== raw) $('a-json').textContent = raw;
@@ -363,8 +365,9 @@ export function createHud(scene, io) {
     if (!report) return;
     inq = { id, report, lines: inquestLines(report), shown: 0, timer: null };
     const el = $('inquest');
-    el.innerHTML = `<h4>INSPECTION · ${esc(report.name)}</h4><ul></ul><p class="verdict"></p><p class="rec"></p><a href="#" id="iq-raw">raw report</a>`;
+    el.innerHTML = `<h4>INSPECTION · ${esc(report.name)}<small>Esc closes</small></h4><ul></ul><p class="verdict"></p><p class="rec"></p><a href="#" id="iq-raw">raw report</a>`;
     el.style.display = 'block';
+    document.body.classList.add('inquest'); // the panel takes the agent card's place while it is open (integrator)
     const step = () => { if (!inq) return; inq.shown += 1; drawInquest(); if (inq.shown > inq.lines.length + 1) clearInterval(inq.timer); };
     step();
     inq.timer = setInterval(step, 400);
@@ -378,6 +381,7 @@ export function createHud(scene, io) {
     if (inq) clearInterval(inq.timer);
     inq = null;
     const el = $('inquest'); if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+    document.body.classList.remove('inquest');
   }
   $('inquest').addEventListener('click', (e) => { if (e.target.id === 'iq-raw') { e.preventDefault(); if (inq) io.rawInquest(inq.id, inq.report); } });
 
@@ -462,19 +466,8 @@ export function createHud(scene, io) {
     add(bin, 'bin', scene.binScreen());
     // a stamp is centred on its anchor; an ID card stands just above it
     for (const [anchor, s] of Object.entries(stamps)) add(s.el, s.kind, scene.stampAnchor(anchor), s.kind === 'stamp');
-    // the inquest panel stands on the bay screen's top edge (before the bay exists: beside the agent card)
-    if (inq) {
-      const el = $('inquest');
-      const p = (scene.bayScreen && scene.bayScreen()) || scene.stampAnchor('bay');
-      // kept on screen first (the bay can sit near an edge), so the panel pass can then slide it off the HUD panels
-      if (p) {
-        // to the right of the bay, over the water (integrator): its left edge 60 px right of the bay screen and its
-        // bottom just above the ticker, so it never covers the plaza, the pen or the robot on the lift
-        const w = el._w || 300, h = el._h || 220;
-        add(el, 'inquest', [Math.min(innerWidth - w / 2 - 8, p[0] + 60 + w / 2), Math.min(innerHeight - 68, Math.max(h + 8, p[1] + 110))]);
-      }
-      else { el.style.display = 'block'; el.style.left = `${Math.min(innerWidth - (el._w || 300) - 12, ($('card').getBoundingClientRect().right || 332) + 12)}px`; el.style.top = `${Math.max(56, innerHeight - 60 - (el._h || 200))}px`; }
-    }
+    // the inquest panel is a fixed HUD panel in the agent card's place while it is open (index.html #inquest);
+    // it is listed in PANELS, so tags and labels slide off it like off any other panel
 
     // the collision pass: highest priority first; a lower one that overlaps (4 px margin) moves down by the overlap + 6 px
     items.sort((x, y) => PRIORITY[y.kind] - PRIORITY[x.kind]);
@@ -494,7 +487,7 @@ export function createHud(scene, io) {
 
   // A label that would hide under a HUD panel slides just off its nearest edge instead (the panels never move).
   // The panels' rectangles are read twice a second, not every frame.
-  const PANELS = ['brand', 'mode', 'card', 'ops', 'strip', 'ticker', 'banner'];
+  const PANELS = ['brand', 'mode', 'card', 'ops', 'strip', 'ticker', 'banner', 'inquest'];
   let panels = [], panelsAt = 0;
   function panelRects() {
     const now = performance.now();

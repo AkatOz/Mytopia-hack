@@ -293,6 +293,7 @@ function onPanelClick(e) {
   if (b.dataset.tool) pressTool(b.dataset.tool, b.dataset.act, !!b.dataset.locked);
   else if ('tier' in b.dataset) pressTier(b.dataset.tier);
   else if (b.dataset.retire) pressRetire(b.dataset.retire);
+  else if (b.dataset.ui === 'inspect') { const id = selected(); openSheet(null); hud.showInquest(id, inquestOf(state, id, chain.verified)); }
   else if (b.dataset.act && e.currentTarget.id === 'agent') press(b.dataset.act);
 }
 for (const id of ['card', 'agent', 'office']) $(id).addEventListener('click', onPanelClick);
@@ -422,7 +423,9 @@ addEventListener('keydown', (e) => {
   else if (k === '?' || (k === '/' && e.shiftKey)) toggleSheet('help');
   else if (k === 'Escape') {
     const open = SHEETS.some((s) => $(s).classList.contains('on'));
-    if (open) openSheet(null); else if (document.body.classList.contains('naked')) naked(false); else leaveRoom();
+    if (open) openSheet(null);
+    else if (hud.inquestOpen()) { hud.closeInquest(); render(); } // the agent card comes back
+    else if (document.body.classList.contains('naked')) naked(false); else leaveRoom();
   }
 });
 // a click (not the end of a drag that turned the camera): a robot first, then a building
