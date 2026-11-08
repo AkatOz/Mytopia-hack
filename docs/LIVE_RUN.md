@@ -77,3 +77,13 @@ Gateway restarted on the optimized code (commit d1cc066): warm-up at startup too
 | The terminal line | `ALLOW read_file 2388 ms` (included the 2 s demo pace) | `ALLOW read_file (gateway 83 ms)` | the gateway returns its own time in the MCP result's `_meta` |
 
 Token still valid at the first refusal: 280 s. The model-mode run on the rebuilt island (rehearsal 1) re-measures all of this; quote the numbers from `GET /stats` at the time.
+
+## Third live run: the additions (Sat 2026-11-07, 4:16 PM PT, scripted client with `--rogue 3`, real AWS)
+
+Chain `chain-20261108T001627Z`, 18 records. The scripted agent tried `send_email` three times, one second apart.
+
+- **Quarantine**: 15.7 s after launch the gateway pulled the badge itself: `revoked` with reason `badge pulled by quarantine after 3 refused calls in 6 s`; the agent's next poll was refused with `badge REVOKED at 00:16:43 by quarantine (token: signature OK, expires in 276 s)`. No operator click.
+- **RESTORE** brought it back (`restored`, seq 11); the next poll was allowed again.
+- **Per-tool revoke** (`POST /agents/research-bot/tools/read_file/revoke`): the reply listed the remaining badge `search_files, create_issue, list_issues`; the next poll was refused with `read_file is not on badge research-bot` and `ms_since_revoke` **1469 ms**; `GET /agents` showed the three-tool badge; the per-tool restore put `read_file` back and the next poll was allowed.
+- **KILL**: psutil in 59 ms, `kill_requested` to `run_stopped` 217 ms, launcher exit 505 ms after the click.
+- Decision time: p50 81 ms on allows (one outlier of 477 ms on the very first call of this restart), p50 86 ms on denies.
