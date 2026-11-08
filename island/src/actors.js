@@ -439,7 +439,12 @@ export function createActors(ctx, world, places, hooks = {}) {
     cart: {
       start(a, st) {
         st.to = st.step.cart.to;
-        st.phase = cart && !a.hidden && a.kind === 'agent' ? 'wait_cart' : 'skip';
+        // integrator: a robot already standing at the target (an escort that reached the lift before the kill) needs
+        // no cart; one whose escort was cut short stands somewhere else and is fetched from there
+        const here = pos(a), there = spot(a, st.to);
+        const already = !!there && dist(here.x, here.z, there[0], there[1]) < 0.8;
+        if (already) a.lastNode = ALIAS[st.to] || st.to;
+        st.phase = cart && !a.hidden && a.kind === 'agent' && !already ? 'wait_cart' : 'skip';
       },
       update(a, st, dt) {
         if (st.phase === 'skip') return true;

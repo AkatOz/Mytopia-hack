@@ -394,7 +394,9 @@ export function apply(state, ev) {
         // build 3: no summon any more (no guard stands behind a killed robot): the chief goes home, the Factory cart
         // collects the robot and sets it on the inspection bay's lift, and the inquest runs
         if (a.known && !['hatch', 'factory'].includes(a.at)) {
-          script([{ dismiss: 'chief' }, ...(a.at === 'bay' ? [] : [{ cart: { to: 'bay_lift' } }]), fx({ kind: 'inquest', agent: id })]);
+          // always the cart, even when `at` already says bay: a quarantine escort can be cut short by the kill (the
+          // freeze stops the robot wherever it stands); the cart step skips itself when the robot is already on the lift
+          script([{ dismiss: 'chief' }, { cart: { to: 'bay_lift' } }, fx({ kind: 'inquest', agent: id })]);
           a.at = 'bay';
         } else script([{ dismiss: 'chief' }]);
       } else {
