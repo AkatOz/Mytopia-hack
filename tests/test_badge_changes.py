@@ -90,6 +90,22 @@ class StatefulDynamo:
             item[names[name]] = values[value]
         return {"Attributes": dict(item)}
 
+    def scan(self, TableName: str, ConsistentRead: bool, **kwargs: Any) -> dict:  # noqa: N803
+        assert ConsistentRead is True
+        return {"Items": [dict(item) for item in self.items.values()]}
+
+    def put_item(self, TableName: str, Item: dict, ConditionExpression: str,  # noqa: N803
+                 ExpressionAttributeNames: dict) -> dict:
+        assert (ConditionExpression, ExpressionAttributeNames) == ("attribute_not_exists(#agent)", {"#agent": "agent"})
+        if Item["agent"]["S"] in self.items:
+            raise RuntimeError("ConditionalCheckFailedException")
+        self.items[Item["agent"]["S"]] = dict(Item)
+        return {}
+
+    def delete_item(self, TableName: str, Key: dict) -> dict:  # noqa: N803
+        self.items.pop(Key["agent"]["S"], None)
+        return {}
+
 
 class StatefulSession:
     def __init__(self, dynamo: StatefulDynamo) -> None:
@@ -176,8 +192,11 @@ def test_whole_badge_revoke_still_logs_tool_admin(any_client: TestClient) -> Non
 
 def test_restore_can_grant_a_tool_and_reset_puts_the_seed_badges_back(any_client: TestClient) -> None:
     c = any_client
-    granted = c.post("/agents/ops-bot/tools/send_email/restore", headers=ADMIN).json()
-    assert granted["allowed_tools"] == ["read_file", "send_email"]
+    # build 3: ops-bot is Bronze, so it may be granted search_files but not send_email (above its ceiling)
+    granted = c.post("/agents/ops-bot/tools/search_files/restore", headers=ADMIN).json()
+    assert granted["allowed_tools"] == ["read_file", "search_files"]
+    assert events(c)[-1]["reason"] == "search_files added to badge ops-bot by operator"
+    assert c.post("/agents/ops-bot/tools/send_email/restore", headers=ADMIN).status_code == 403
     c.post("/agents/research-bot/tools/read_file/revoke", headers=ADMIN)
     assert c.post("/demo/reset", headers=ADMIN).json()["ok"] is True
     assert badge(c, "ops-bot")["allowed_tools"] == ["read_file"]

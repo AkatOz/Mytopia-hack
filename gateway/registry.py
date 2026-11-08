@@ -1,24 +1,37 @@
-"""The badge registry: one row per agent saying its status and which tools it may use.
-MemoryRegistry keeps the rows in a dict (local mode); DynamoRegistry reads table mytopia_agents with a consistent read on every call and fails closed."""
+"""The badge registry: one row per agent saying its status, its tier and which tools it may use.
+MemoryRegistry keeps the rows in a dict (local mode); DynamoRegistry reads table mytopia_agents with a consistent read on every call and fails closed.
+Rows are the two seed badges (made_by seed) plus any the Factory minted (made_by factory); a reset drops the Factory's rows."""
 
 import sys
 import threading
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-KNOWN_AGENTS = ("research-bot", "ops-bot")
+from gateway.tiers import SEED_TIERS
+
+KNOWN_AGENTS = ("research-bot", "ops-bot")   # the seed badges (warm-up reads these); minted agents live only in rows
 SEED_TOOLS = {"research-bot": ["read_file", "search_files", "create_issue", "list_issues"],
               "ops-bot": ["read_file"]}   # the demo's badges; /demo/reset puts these back
+SEED_ROLES = {"research-bot": "reads documents and files tickets", "ops-bot": "reads documents"}
+LISTED_STATUSES = ("ACTIVE", "REVOKED", "KILLED")   # a row with any other status is not an agent anyone may see or use
 
 
 class RegistryUnavailable(Exception):
     """The registry could not be read; callers must deny with rule registry-unavailable."""
 
 
+class AgentExists(Exception):
+    """A mint asked for an agent id that already has a row (PutItem's attribute_not_exists failed)."""
+
+
 class Registry(Protocol):
     def get(self, agent_id: str) -> dict | None: ...
     def set_status(self, agent_id: str, status: str, by: str, expect: str | None = None) -> dict: ...
     def set_tools(self, agent_id: str, allowed_tools: list[str], by: str) -> dict: ...
+    def set_tier(self, agent_id: str, tier: str, allowed_tools: list[str], by: str) -> dict: ...
+    def put(self, row: dict) -> dict: ...
+    def delete(self, agent_id: str) -> None: ...
+    def all_rows(self) -> list[dict]: ...
     def list_agents(self) -> list[dict]: ...
     def reset(self) -> None: ...
 
@@ -29,15 +42,28 @@ def now_iso() -> str:
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
+def seed_fields(agent_id: str) -> dict:
+    """What a reset writes back onto a seed row besides its status: the seed tools, tier, role and made_by.
+    Writing tier here also fixes a row written before tiers existed."""
+    return {"allowed_tools": list(SEED_TOOLS[agent_id]), "tier": SEED_TIERS[agent_id],
+            "role": SEED_ROLES[agent_id], "made_by": "seed"}
+
+
 def seed_rows(research_client_id: str = "local-research-bot", ops_client_id: str = "local-ops-bot") -> dict[str, dict]:
     """The two badge rows of the demo, both ACTIVE."""
-    common = {"status": "ACTIVE", "revoked_at": None, "revoked_by": None, "updated_at": now_iso()}
+    now = now_iso()
+    common = {"status": "ACTIVE", "revoked_at": None, "revoked_by": None, "updated_at": now, "created_at": now}
     return {
         "research-bot": {"agent": "research-bot", "name": "Research Bot", "client_id": research_client_id,
-                         "allowed_tools": list(SEED_TOOLS["research-bot"]), "color": "mustard", **common},
+                         "color": "mustard", **seed_fields("research-bot"), **common},
         "ops-bot": {"agent": "ops-bot", "name": "Ops Bot", "client_id": ops_client_id,
-                    "allowed_tools": list(SEED_TOOLS["ops-bot"]), "color": "sage", **common},
+                    "color": "sage", **seed_fields("ops-bot"), **common},
     }
+
+
+def listed(rows: list[dict]) -> list[dict]:
+    """The rows GET /agents and the client map may use: only the three known statuses (anything else fails closed)."""
+    return [row for row in rows if row.get("status") in LISTED_STATUSES]
 
 
 def status_fields(status: str, by: str) -> dict:
@@ -50,6 +76,11 @@ def status_fields(status: str, by: str) -> dict:
         fields["revoked_at"] = None
         fields["revoked_by"] = None
     return fields
+
+
+def error_code(exc: Exception) -> str:
+    """The AWS error code of a botocore ClientError, or ''."""
+    return str(getattr(exc, "response", {}).get("Error", {}).get("Code", ""))
 
 
 def dynamo_client(session: Any) -> Any:
@@ -90,19 +121,48 @@ class MemoryRegistry:
 
     def set_tools(self, agent_id: str, allowed_tools: list[str], by: str) -> dict:
         """Replace the badge's tool list (who did it is in the event, not the row)."""
+        return self._update(agent_id, {"allowed_tools": list(allowed_tools), "updated_at": now_iso()})
+
+    def set_tier(self, agent_id: str, tier: str, allowed_tools: list[str], by: str) -> dict:
+        """Tier and tool list in one write (a demotion trims the list in the same step)."""
+        return self._update(agent_id, {"tier": tier, "allowed_tools": list(allowed_tools), "updated_at": now_iso()})
+
+    def _update(self, agent_id: str, fields: dict) -> dict:
         with self._lock:
             if agent_id not in self._rows:
                 raise KeyError(agent_id)
-            self._rows[agent_id].update({"allowed_tools": list(allowed_tools), "updated_at": now_iso()})
+            self._rows[agent_id].update(fields)
             return dict(self._rows[agent_id])
 
+    def put(self, row: dict) -> dict:
+        """Create a row; an existing agent id raises AgentExists (the memory twin of attribute_not_exists)."""
+        with self._lock:
+            if row["agent"] in self._rows:
+                raise AgentExists(row["agent"])
+            self._rows[row["agent"]] = dict(row)
+            return dict(row)
+
+    def delete(self, agent_id: str) -> None:
+        with self._lock:
+            self._rows.pop(agent_id, None)
+
+    def all_rows(self) -> list[dict]:
+        with self._lock:
+            ids = list(self._rows)
+        return [row for row in (self.get(a) for a in ids) if row]  # through get(), one read per row, like before
+
     def list_agents(self) -> list[dict]:
-        return [row for row in (self.get(a) for a in KNOWN_AGENTS) if row]
+        return listed(self.all_rows())
 
     def reset(self) -> None:
+        """The two seed badges ACTIVE with their seed tools and tiers; every Factory row dropped."""
+        with self._lock:
+            self._rows = {k: v for k, v in self._rows.items() if v.get("made_by") != "factory"}
+            for agent_id in KNOWN_AGENTS:
+                self._rows.setdefault(agent_id, seed_rows()[agent_id])  # a seed row deleted by hand comes back
         for agent_id in KNOWN_AGENTS:
             self.set_status(agent_id, "ACTIVE", "reset")
-            self.set_tools(agent_id, SEED_TOOLS[agent_id], "reset")
+            self._update(agent_id, {**seed_fields(agent_id), "updated_at": now_iso()})
 
 
 class DynamoRegistry:
@@ -146,6 +206,10 @@ class DynamoRegistry:
         """UpdateItem of allowed_tools (and updated_at, which every row has); who did it is in the event."""
         return self._update(agent_id, {"allowed_tools": list(allowed_tools), "updated_at": now_iso()})
 
+    def set_tier(self, agent_id: str, tier: str, allowed_tools: list[str], by: str) -> dict:
+        """One UpdateItem of tier and allowed_tools together, so a demotion never leaves a list above its ceiling."""
+        return self._update(agent_id, {"tier": tier, "allowed_tools": list(allowed_tools), "updated_at": now_iso()})
+
     def _update(self, agent_id: str, fields: dict, expect: str | None = None) -> dict:
         """One UpdateItem of these attributes on an existing row (never creates one); returns the new row.
         With expect, the row's status must also still be that value (#status = :expect)."""
@@ -163,11 +227,52 @@ class DynamoRegistry:
                               ConditionExpression=condition, ReturnValues="ALL_NEW")
         return self._row(response["Attributes"]) or {}
 
+    def put(self, row: dict) -> dict:
+        """PutItem only if no row has this agent id yet: a failed condition raises AgentExists, anything else
+        RegistryUnavailable (fail closed)."""
+        if self._client is None:
+            raise RegistryUnavailable("no AWS session for the registry")
+        item = {k: self._to_dynamo(v) for k, v in row.items()}
+        try:
+            self._client.put_item(TableName=self.table_name, Item=item,
+                                  ConditionExpression="attribute_not_exists(#agent)",
+                                  ExpressionAttributeNames={"#agent": "agent"})
+        except Exception as exc:  # noqa: BLE001 - every AWS error fails closed
+            if "ConditionalCheckFailed" in (error_code(exc) or str(exc)):
+                raise AgentExists(row["agent"]) from exc
+            raise RegistryUnavailable(type(exc).__name__) from exc
+        return dict(row)
+
+    def delete(self, agent_id: str) -> None:
+        self._call("delete_item", Key={"agent": {"S": agent_id}})
+
+    def all_rows(self) -> list[dict]:
+        """Every row: a strongly consistent Scan, page by page (the table holds a handful of badges).
+        If the Scan is refused (a role without dynamodb:Scan, before infra/role_policy.py ran), the two seed rows are
+        read one by one instead, so the demo badges keep working; a real outage fails those reads too and raises."""
+        rows: list[dict] = []
+        start: dict | None = None
+        while True:
+            extra = {"ExclusiveStartKey": start} if start else {}
+            try:
+                response = self._call("scan", ConsistentRead=True, **extra)
+            except RegistryUnavailable as exc:
+                print(f"registry: Scan failed ({exc}); reading the seed badges one by one", file=sys.stderr)
+                return [row for row in (self.get(a) for a in KNOWN_AGENTS) if row]
+            rows += [row for row in (self._row(item) for item in response.get("Items", [])) if row]
+            start = response.get("LastEvaluatedKey")
+            if not start:
+                return rows
+
     def list_agents(self) -> list[dict]:
-        # the gateway role has no Scan permission, so read the known ids one by one
-        return [row for row in (self.get(a) for a in KNOWN_AGENTS) if row]
+        return listed(self.all_rows())
 
     def reset(self) -> None:
+        """The two seed badges ACTIVE with their seed tools, tier and role (written onto rows from before tonight
+        too); any Factory row still there is deleted (factory.py deletes their identities first)."""
+        for row in self.all_rows():
+            if row.get("made_by") == "factory":
+                self.delete(row["agent"])
         for agent_id in KNOWN_AGENTS:
             self.set_status(agent_id, "ACTIVE", "reset")
-            self.set_tools(agent_id, SEED_TOOLS[agent_id], "reset")
+            self._update(agent_id, {**seed_fields(agent_id), "updated_at": now_iso()})

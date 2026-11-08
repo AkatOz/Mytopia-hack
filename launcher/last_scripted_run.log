@@ -1,0 +1,13 @@
+token OK: client s2ch2ppk..., scope mytopia/tools, expires in 300 s [cognito token eyJraWQiOiJu...]
+launcher: run-fe7f started research-bot (scripted) pid 3156
+agent research-bot run-fe7f mode scripted
+tools/list: 4 tools (read_file, search_files, create_issue, list_issues)
+ALLOW read_file (gateway 81 ms)
+ALLOW search_files (gateway 77 ms)
+ALLOW create_issue (gateway 83 ms)
+DENY send_email: send_email is not on badge research-bot [rule: allow-list]
+ALLOW read_file (gateway 79 ms)
+DENY read_file: badge REVOKED at 01:34:38 by operator (token: signature OK, expires in 280 s) [rule: status-revoked]
+DENY read_file: badge REVOKED at 01:34:38 by operator (token: signature OK, expires in 277 s) [rule: status-revoked]
+launcher: KILLED -> psutil in 38 ms (kill to process gone)
+launcher: run-fe7f stopped, exit 15 (killed by harness)

@@ -1,0 +1,69 @@
+<!doctype html>
+<!-- Scratch page for builder B2: opens one interior from rooms.js in a bare stage, without the island or the HUD.
+     ?room=gatehouse|files|github|mail|admin|factory_office|factory_floor   &build=1 (play a build)   &tamper=1 (TAMPER TEST)
+     &theta=0.6 (orbit the camera by this many radians after entering)   &px=2 (keep the pixel look)
+     window.rooms is the createRooms() object, for the console. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rooms scratch</title>
+<script type="importmap">
+{ "imports": {
+  "three": "../vendor/three/three.module.js",
+  "three/addons/controls/OrbitControls.js": "../vendor/three/OrbitControls.js"
+} }
+</script>
+<style>
+@font-face { font-family: "Pixelify Sans"; src: url("../fonts/pixelify-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Pixelify Sans"; src: url("../fonts/pixelify-sans-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: block; }
+@font-face { font-family: "VT323"; src: url("../fonts/vt323-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: block; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #f3ead7; }
+three-d-stage { position: fixed; inset: 0; display: block; }
+#info { position: fixed; left: 8px; bottom: 6px; font: 16px "VT323", monospace; color: #3a312b; z-index: 3; }
+</style>
+</head>
+<body>
+<three-d-stage pixel="2" bare background="#f3ead7"></three-d-stage>
+<div id="info"></div>
+<script src="../three-d-stage.js"></script>
+<script type="module">
+import { makeKit } from '../src/kit.js';
+import * as L from '../src/layout.js';
+import { createRooms } from '../src/rooms.js';
+
+const q = new URLSearchParams(location.search);
+const stage = document.querySelector('three-d-stage');
+const { THREE } = await stage.ready;
+const kit = makeKit(THREE);
+// a stand-in for the world, so the stage frames itself the way the island does
+const world = new THREE.Group(); world.add(new THREE.Mesh(new THREE.BoxGeometry(30, 1, 30), kit.M.grass_top));
+stage.setObject(world, { target: L.FRAMING.target, radius: L.FRAMING.radius });
+stage._controls.enablePan = false;
+const demo = await fetch('/replay/demo.json').then((r) => r.json());
+let log = demo.events.slice();
+const roster = [
+  { agent: 'research-bot', name: 'Research Bot', tier: 'silver', status: 'ACTIVE', allowed_tools: ['read_file', 'search_files', 'create_issue', 'list_issues'], made_by: 'seed' },
+  { agent: 'ops-bot', name: 'Ops Bot', tier: 'bronze', status: 'ACTIVE', allowed_tools: ['read_file'], made_by: 'seed' },
+  { agent: 'billing-bot', name: 'Billing Bot', tier: 'gold', status: 'ACTIVE', allowed_tools: ['read_file', 'search_files', 'create_issue', 'list_issues', 'send_email'], made_by: 'factory', color: 'teal' },
+];
+const rooms = createRooms({ THREE, kit, L, stage }, {
+  getLog: () => ({ events: log, chain: demo.chain }), getRoster: () => roster,
+  onRow: (seq) => { document.getElementById('info').textContent = `row clicked: #${seq}`; console.log('row', seq); },
+});
+stage._scene.add(rooms.group);
+stage.onTick = (t, dt) => rooms.tick(t, dt);
+window.rooms = rooms; window.stage = stage;
+const key = q.get('room') || 'gatehouse';
+rooms.enter(key);
+if (q.get('px')) stage.setPixel(Number(q.get('px')));
+const theta = Number(q.get('theta') || 0);
+if (theta) { const c = stage._camera, t = stage._controls.target, o = c.position.clone().sub(t); o.applyAxisAngle(new THREE.Vector3(0, 1, 0), theta); c.position.copy(t).add(o); stage._controls.update(); }
+if (q.get('zoom')) { stage._camera.zoom *= Number(q.get('zoom')); stage._camera.updateProjectionMatrix(); }
+document.getElementById('info').textContent = `room ${key}`;
+if (q.get('build')) setTimeout(() => rooms.buildRobot({ id: 'billing-bot', name: 'Billing Bot', color: 'teal', tier: 'gold', tools: roster[2].allowed_tools }).then(() => console.log('built')), 800);
+if (q.get('tamper')) setTimeout(() => rooms.tamperTest().then((r) => console.log('tamper', JSON.stringify(r))), 1500);
+if (q.get('live')) setInterval(() => { const e = log[log.length - 1]; log = log.concat([{ ...e, seq: e.seq + 1, decision: Math.random() < 0.5 ? 'allow' : 'deny', tool: q.get('live') }]); rooms.refresh(); }, 1200);
+</script>
+</body>
+</html>

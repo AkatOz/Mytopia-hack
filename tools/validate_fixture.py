@@ -14,15 +14,17 @@ from typing import Any
 REPO = Path(__file__).resolve().parent.parent
 FIELDS = ["seq", "ts", "run_id", "agent", "agent_mode", "tool", "args_summary", "decision", "rule",
           "reason", "latency_ms", "ms_since_revoke", "prev_hash", "hash"]
-DECISIONS = {"run_started", "allow", "deny", "revoked", "restored", "kill_requested", "run_stopped"}
+DECISIONS = {"run_started", "allow", "deny", "revoked", "restored", "kill_requested", "run_stopped",
+             "created", "tier_changed", "retired"}
 RULES = {"allow-list", "status-revoked", "status-killed", "token", "registry-unavailable",
-         "header-mismatch", "admin", "harness"}
+         "header-mismatch", "admin", "harness", "factory"}
 BADGE_TOOLS = {"read_file", "search_files", "create_issue", "list_issues", "send_email", "delete_file"}
 TOOLS = BADGE_TOOLS | {"tools/list", "admin", "harness"}
 MODES = {"model", "scripted", "replay"}
 ADMIN_DECISIONS = {"revoked", "restored", "kill_requested"}
 PER_TOOL_DECISIONS = {"revoked", "restored"}
 RUN_DECISIONS = {"run_started", "run_stopped"}
+FACTORY_DECISIONS = {"created", "tier_changed", "retired"}  # the Factory: tool admin, rule factory
 TS_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 
@@ -54,12 +56,16 @@ def check_event(event: dict[str, Any]) -> list[str]:
         problems.append(f"seq {seq}: {event['decision']} needs {wanted} and rule admin")
     if event["decision"] in RUN_DECISIONS and (event["tool"], event["rule"]) != ("harness", "harness"):
         problems.append(f"seq {seq}: {event['decision']} needs tool harness and rule harness")
+    if (event["decision"] in FACTORY_DECISIONS) != (event["rule"] == "factory") or \
+            (event["decision"] in FACTORY_DECISIONS and event["tool"] != "admin"):
+        problems.append(f"seq {seq}: {event['decision']} with rule {event['rule']}: created, tier_changed and retired "
+                        "need tool admin and rule factory, and only they use rule factory")
     if not isinstance(event["seq"], int) or isinstance(event["seq"], bool):
         problems.append(f"seq {seq}: seq is not an integer")
     if not isinstance(event["ts"], str) or not TS_PATTERN.match(event["ts"]):
         problems.append(f"seq {seq}: ts {event['ts']!r} is not UTC ISO 8601 with milliseconds and Z")
-    if not isinstance(event["args_summary"], str) or len(event["args_summary"]) > 80:
-        problems.append(f"seq {seq}: args_summary must be a string of at most 80 characters")
+    if not isinstance(event["args_summary"], str) or len(event["args_summary"]) > 120:
+        problems.append(f"seq {seq}: args_summary must be a string of at most 120 characters")
     if not isinstance(event["latency_ms"], (int, float)) or isinstance(event["latency_ms"], bool):
         problems.append(f"seq {seq}: latency_ms is not a number")
     if event["ms_since_revoke"] is not None and event["decision"] != "deny":

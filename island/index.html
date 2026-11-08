@@ -156,7 +156,6 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
 @keyframes stamp { 0% { transform: rotate(-6deg) scale(1.15); opacity: 0; } 10% { transform: rotate(-6deg) scale(1); opacity: 1; } 80% { opacity: 1; } 100% { transform: rotate(-6deg) scale(1); opacity: 0; } }
 /* round two: the ID card a robot raises at a gate, the window or the pen (paper, 220 px, 1.2 s; stripe in its colour) */
 .idcard { position: absolute; display: none; width: 220px; background: var(--paper); border: 3px solid var(--ink); border-top: 9px solid #e0b347; box-shadow: 3px 3px 0 var(--ink); padding: 2px 7px 4px; font-family: var(--vt); font-size: 18px; line-height: 1.1; animation: idcard 1.2s ease-out forwards; }
-.idcard[data-color=sage] { border-top-color: #9cc29c; }
 .idcard .nw { white-space: nowrap; } /* a long token line wraps at its " · ", never inside "expires in 243 s" */
 @keyframes idcard { 0% { transform: translateY(8px); opacity: 0; } 12% { transform: translateY(0); opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
 .bincount { position: absolute; display: none; font: 600 17px var(--px); line-height: 1.2; background: var(--bad); color: #fff; border: 2px solid var(--ink); padding: 0 8px; white-space: nowrap; }
@@ -184,6 +183,97 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
 #arch table.arch-map tr.step td { background: var(--good-bg); }
 #arch .arch-limits { font-family: var(--vt); font-size: 19px; line-height: 1.15; margin: 6px 0 0; }
 
+/* ---------- build 3 (docs/BUILD3.md section 6): tiers, chips with five states, the sheets, the inquest ---------- */
+/* the tier medal: a flat square in the tier's colour with the ink edge (bronze, silver, gold, diamond: muted, no shine) */
+.medal { display: inline-block; flex: none; width: 14px; height: 14px; background: var(--m, #9a9a92); border: 2px solid var(--ink); vertical-align: -2px; }
+.tierline { display: flex; align-items: center; gap: 6px; font-family: var(--vt); font-size: 18px; line-height: 1.1; margin: 1px 0 2px; }
+.tierline .tl { flex: 1; min-width: 0; line-height: 1; }
+.tierline .arrows { display: flex; gap: 3px; flex: none; }
+.tierline .arrows button { font: 13px var(--px); line-height: 1; width: 22px; height: 20px; padding: 0; border: 2px solid var(--ink); background: var(--paper); cursor: pointer; color: var(--ink); }
+.tierline .arrows button:hover:not(:disabled) { background: var(--peach); }
+.tierline .arrows button:disabled { opacity: .35; cursor: not-allowed; }
+/* the chips: grant (paper, "+"), locked (grey with a pixel padlock and its "Gold+" hint), and the 0.3 s shake */
+.chip.grant { background: var(--paper); color: var(--ink); border-style: dashed; }
+button.chip.grant:hover { background: var(--good-bg); }
+.chip.locked { background: var(--off); color: var(--dim); border-color: #a39a8c; }
+.chip.held { background: var(--paper); color: var(--bad); border-style: dashed; text-decoration: line-through; }
+.lock { display: inline-block; width: 10px; height: 12px; margin-right: 3px; vertical-align: -1px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12' shape-rendering='crispEdges'%3E%3Cpath d='M3 0h4v1H3zM2 1h1v4H2zM7 1h1v4H7z' fill='%237a6f62'/%3E%3Crect x='1' y='5' width='8' height='7' fill='%237a6f62'/%3E%3Crect x='4' y='7' width='2' height='3' fill='%23f3ead7'/%3E%3C/svg%3E") no-repeat center / 10px 12px; image-rendering: pixelated; }
+.shake { animation: shake .3s linear; }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(3px); } }
+/* the operator panel: each big button with its plain subtitle; the three small ones under them */
+#ops { width: 228px; }
+#ops .acts { display: grid; gap: 5px; margin: 6px 4px 6px 0; }
+#ops .act { display: grid; grid-template-columns: 82px 1fr; gap: 6px; align-items: center; }
+#ops .act span { font-family: var(--vt); font-size: 15px; line-height: 1; color: var(--dim); }
+#ops .small3 { display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: 4px; margin: 0 4px 6px 0; }
+#ops .small3 button { font-size: 12px; padding: 3px 2px; box-shadow: 2px 2px 0 var(--ink); background: var(--cream); white-space: nowrap; }
+#ops .small3 button[data-ui=factory] { background: var(--peach); }
+/* hide panels (H): only the pill stays; the 3D world keeps running */
+#pill { position: fixed; z-index: 7; left: 12px; bottom: 12px; padding: 2px 10px; font: 18px var(--vt); cursor: pointer; display: none; }
+body.naked .hud, body.naked #overlay, body.naked #inquest, body.naked .sheet { display: none !important; }
+body.naked #pill { display: block !important; }
+/* the inquest panel: paper, 300 px, over the bay screen; its lines type themselves one every 0.4 s */
+#inquest { position: fixed; z-index: 6; display: none; width: 300px; padding: 6px 10px 8px; background: var(--paper); border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); font-family: var(--vt); font-size: 17px; line-height: 1.12; pointer-events: auto; }
+#inquest h4 { margin: 0 0 4px; font: 600 16px var(--px); letter-spacing: 1px; border-bottom: 2px solid var(--ink); padding-bottom: 2px; }
+#inquest ul { list-style: none; margin: 0; padding: 0; }
+#inquest li { display: flex; gap: 6px; } #inquest li span { flex: none; width: 12px; }
+#inquest li.ok span { color: var(--good); } #inquest li.no span { color: var(--bad); } #inquest li.na span { color: var(--dim); }
+#inquest .verdict { margin: 5px 0 0; font-size: 17px; } #inquest .rec { margin: 3px 0 0; color: var(--good); }
+#inquest .verdict:empty, #inquest .rec:empty { display: none; }
+#inquest a { font-size: 15px; color: var(--dim); }
+body.room #inquest { display: none !important; }
+/* the agent sheet, the Factory office sheet and the help sheet */
+.sheet h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.sheet h3 .dim { font: 17px var(--vt); }
+.sheet .status { padding: 0 6px; border: 2px solid var(--ink); font: 17px var(--vt); }
+#agent { inset: 56px auto 64px 20px; width: min(620px, calc(100vw - 280px)); }
+#agent .facts { display: grid; grid-template-columns: 110px 1fr; margin: 6px 0; font-family: var(--vt); font-size: 19px; line-height: 1.15; }
+#agent .facts dt { color: var(--dim); } #agent .facts dd { margin: 0; }
+#agent .lbl, #office .lbl { font-family: var(--vt); font-size: 16px; color: var(--dim); margin-top: 6px; }
+#agent .chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 3px 0 8px; }
+#agent table.verbs td.num { text-align: right; }
+#agent .acts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+#agent .acts .act { display: flex; flex-direction: column; gap: 2px; font: 15px var(--vt); color: var(--dim); }
+#agent .acts button, #office button { font: 600 14px var(--px); border: 3px solid var(--ink); background: var(--paper); box-shadow: 2px 2px 0 var(--ink); cursor: pointer; padding: 3px 8px; color: var(--ink); }
+#agent .acts button[data-act=revoke] { background: var(--bad-bg); } #agent .acts button[data-act=restore] { background: var(--good-bg); } #agent .acts button[data-act=kill] { background: #f3c3b6; }
+#agent button:disabled, #office button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+#agent details { margin-top: 6px; font: 17px var(--vt); } #agent summary { cursor: pointer; color: var(--dim); }
+#office { inset: 56px 248px 64px 20px; }
+#office td.who { white-space: nowrap; }
+#office .cols { display: grid; grid-template-columns: 1.1fr 1fr; gap: 16px; }
+#office table.roster td { vertical-align: middle; }
+#office .dot { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--ink); margin-right: 5px; }
+.squares { display: inline-flex; gap: 2px; } .squares i { display: block; width: 10px; height: 10px; border: 2px solid var(--ink); background: var(--paper); } .squares i.on { background: var(--good); }
+#office h4 { margin: 0 0 4px; font: 600 16px var(--px); letter-spacing: 1px; }
+#office label { display: block; font: 18px var(--vt); margin-top: 6px; }
+#office input[type=text], #office input:not([type]) { display: block; width: 100%; font: 19px var(--vt); border: 2px solid var(--ink); background: #fff; padding: 1px 6px; }
+#office .slug { font: 16px var(--vt); color: var(--dim); }
+#office .tiers { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+#office .tiers button { text-align: left; font: 15px var(--vt); padding: 2px 6px; box-shadow: none; border-width: 2px; }
+#office .tiers button b { font: 600 14px var(--px); } #office .tiers button small { display: block; color: var(--dim); font-size: 14px; line-height: 1; }
+#office .tiers button.sel { background: var(--peach); box-shadow: inset 0 0 0 2px var(--ink); }
+#office .ftools { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+#office .ftools label { margin: 0; font-size: 17px; } #office .ftools label.locked { color: var(--dim); }
+#office .ftools small { font-size: 14px; }
+#office .swatches { display: flex; gap: 5px; align-items: center; margin-top: 2px; }
+#office .swatches button { width: 24px; height: 24px; padding: 0; box-shadow: none; border-width: 2px; }
+#office .swatches button.sel { outline: 3px solid var(--ink); outline-offset: 1px; }
+#office .buildrow { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+#office #f-build { background: var(--orange); font-size: 16px; padding: 4px 16px; }
+#office .err { font: 18px var(--vt); color: var(--bad); }
+#office table.roster button { font-size: 12px; padding: 1px 6px; background: var(--bad-bg); }
+#help { inset: 40px auto 40px 50%; transform: translateX(-50%); width: min(720px, calc(100vw - 20px)); }
+#help ol { list-style: none; margin: 4px 0 8px; padding: 0; }
+#help li { display: grid; grid-template-columns: 36px 1fr; gap: 8px; align-items: center; font: 21px var(--vt); line-height: 1.1; padding: 4px 0; border-bottom: 1px solid var(--line); }
+#help li svg { width: 24px; height: 24px; display: block; image-rendering: pixelated; border: 2px solid var(--ink); background: var(--cream); padding: 2px; box-sizing: content-box; }
+#help li b { font: 600 17px var(--px); }
+#help .keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 14px; font: 19px var(--vt); }
+#help .keys b { display: inline-block; min-width: 26px; text-align: center; border: 2px solid var(--ink); background: var(--paper); font-weight: 400; margin-right: 6px; }
+.sheet #j-sum { font: 20px var(--vt); background: var(--cream); padding: 2px 8px; margin: 0 0 6px; }
+.sheet #j-sum:empty { display: none; }
+#roomtitle .tamper { background: var(--bad-bg); }
+#roomtitle .sub { display: block; font: 17px var(--vt); color: var(--dim); } /* its own line: the bar stays narrow and clear of the clerk's desk */
+
 /* ---------- about 800 px wide (the terminal takes the right 38 percent of the projector) ---------- */
 @media (max-width: 900px) {
   #banner { font-size: 30px; }
@@ -200,9 +290,15 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
   .tag.place { font-size: 16px; } .tag { font-size: 16px; } .stamp { font-size: 24px; }
   #ticker { font-size: 18px; }
   .sheet { inset: 52px 180px 56px 10px; }
+  #ops { width: 170px; } #ops .act { grid-template-columns: 1fr; } #ops .act span { display: none; }
+  #ops .acts { grid-template-columns: 1fr 1fr; gap: 4px; } #ops .small3 { grid-template-columns: 1fr 1fr; } #ops .small3 button { font-size: 11px; } #ops .small3 button[data-ui=hide] { grid-column: span 2; }
+  .tierline { font-size: 15px; } .tierline .arrows button { width: 18px; height: 17px; font-size: 11px; }
+  #agent, #office { inset: 52px 10px 56px 10px; width: auto; transform: none; } #office .cols { grid-template-columns: 1fr; }
+  #help { inset: 10px; width: auto; transform: none; } #help li { font-size: 18px; } #help .keys { grid-template-columns: 1fr 1fr; font-size: 17px; }
+  #inquest { width: 260px; font-size: 15px; }
 }
 @media (max-height: 640px) {
-  #ops button { padding: 2px 4px; } #ops .hint { display: none; }
+  #ops button { padding: 2px 4px; } #ops .hint { display: none; } #ops .save { display: none; }
   #card .lbl { display: none; } #card .chips { margin-top: 4px; }
 }
 </style>
@@ -218,6 +314,7 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
 <div id="card" class="hud paper">
   <div class="tabs" id="tabs"></div>
   <div class="head"><h2 id="c-name">Research Bot</h2><span class="status st-none" id="c-status">NO RUN</span></div>
+  <div class="tierline" id="c-tier"></div>
   <div class="sub" id="c-sub">client —</div>
   <div class="lbl">badge · <span id="c-badge">—</span></div>
   <div class="chips" id="c-chips"></div>
@@ -230,14 +327,19 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
   <div class="top"><h3>BLOCKED</h3><span class="count" id="o-count">0</span></div>
   <div class="lbl">calls refused by the gateway</div>
   <div class="for" id="o-for">acts on: research-bot</div>
-  <div class="btns">
-    <button data-act="revoke">REVOKE</button>
-    <button data-act="restore">RESTORE</button>
-    <button data-act="kill">KILL</button>
-    <button data-act="reset">RESET</button>
+  <div class="acts">
+    <div class="act"><button data-act="revoke" title="REVOKE: take this agent's whole badge away now; its next call is refused">REVOKE</button><span>take the badge away now · the next call is refused</span></div>
+    <div class="act"><button data-act="restore" title="RESTORE: give this agent its badge back">RESTORE</button><span>give the badge back</span></div>
+    <div class="act"><button data-act="kill" title="KILL: the launcher stops this agent's running program">KILL</button><span>stop the running program</span></div>
+    <div class="act"><button data-act="reset" title="RESET: a new chain, the two seed badges, Factory agents retired">RESET</button><span>fresh demo: new chain, seed badges</span></div>
+  </div>
+  <div class="small3">
+    <button data-ui="factory" title="the Factory office: make, rank and retire agents (F)">FACTORY</button>
+    <button data-ui="help" title="how to read MYTOPIA (?)">? HELP</button>
+    <button data-ui="hide" title="hide every panel; H brings them back">HIDE PANELS</button>
   </div>
   <button data-act="save" class="save">SAVE REPLAY</button>
-  <div class="hint"><span><b>G</b> ledger ·</span> <span><b>T</b> table ·</span> <span><b>R</b> replay</span><br><span><b>A</b> architecture ·</span> <span><b>Esc</b> back</span></div>
+  <div class="hint"><span><b>G</b> ledger ·</span> <span><b>T</b> table ·</span> <span><b>F</b> factory</span><br><span><b>A</b> architecture ·</span> <span><b>H</b> hide ·</span> <span><b>?</b> help</span></div>
 </div>
 
 <div id="strip" class="hud paper">
@@ -249,10 +351,26 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
 
 <div id="ticker" class="hud paper"><span class="line">waiting for the gateway…</span></div>
 
-<div id="roomtitle" class="hud paper"><b>GATEHOUSE</b> · the ledger, every call in order <button id="back">← island (Esc)</button></div>
+<div id="roomtitle" class="hud paper"><b id="r-name">GATEHOUSE</b> <span class="sub" id="r-sub">· the ledger, every call in order</span> <button id="r-tamper" class="tamper" title="change one character of a COPY of the ledger and watch every link after it break; the real log is untouched">TAMPER TEST</button><button id="r-office" title="the NEW AGENT form and the roster (F)">NEW AGENT</button><button id="back">← island (Esc)</button></div>
+<div id="pill" class="paper" title="show the panels again">show panels (H)</div>
+<div id="inquest"></div>
 <div id="iris"><div></div></div>
 <div id="table" class="sheet paper"><h3>Every event seen</h3><table><thead><tr><th>seq</th><th>ts</th><th>agent</th><th>tool</th><th>decision</th><th>rule</th><th>reason</th><th>latency_ms</th><th>since revoke</th></tr></thead><tbody id="t-body"></tbody></table></div>
-<div id="json" class="sheet paper"><h3 id="j-title">Latest event</h3><pre id="j-body"></pre><p id="j-foot" class="foot"></p></div>
+<div id="json" class="sheet paper"><h3 id="j-title">Latest event</h3><p id="j-sum"></p><pre id="j-body"></pre><p id="j-foot" class="foot"></p></div>
+<div id="agent" class="sheet paper"><div id="a-body"></div><details id="a-raw"><summary>raw event (JSON)</summary><pre id="a-json"></pre></details></div>
+<div id="office" class="sheet paper"><h3><span>THE FACTORY OFFICE <span class="dim">badges are made, ranked and retired here</span></span><span class="dim">F or Esc closes</span></h3><div class="cols"><div id="f-roster"></div><div id="f-form"></div></div></div>
+<div id="help" class="sheet paper">
+  <h3>How to read MYTOPIA <span class="dim">? or Esc closes</span></h3>
+  <ol>
+    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="5" y="0" width="2" height="2" fill="#2b221e"/><rect x="2" y="2" width="8" height="5" fill="#e0b347"/><rect x="4" y="4" width="1" height="1" fill="#2b221e"/><rect x="7" y="4" width="1" height="1" fill="#2b221e"/><rect x="3" y="7" width="6" height="4" fill="#e0b347"/><rect x="4" y="8" width="2" height="1" fill="#3f8a56"/><rect x="3" y="11" width="2" height="1" fill="#2b221e"/><rect x="7" y="11" width="2" height="1" fill="#2b221e"/></svg><span><b>The robot</b> is an AI agent. It carries a badge (its identity) that lists the tools it may use.</span></li>
+    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="1" y="2" width="2" height="10" fill="#2b221e"/><rect x="9" y="2" width="2" height="10" fill="#2b221e"/><rect x="3" y="5" width="6" height="2" fill="#f2892b"/><rect x="5" y="5" width="2" height="2" fill="#fbf7ee"/></svg><span><b>A gate</b> is a tool: files, tickets, mail, delete. It lifts only for a badge that holds that tool.</span></li>
+    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="3" y="0" width="6" height="2" fill="#2b221e"/><rect x="3" y="2" width="6" height="3" fill="#f3d9b4"/><rect x="2" y="5" width="8" height="5" fill="#33415c"/><rect x="5" y="6" width="2" height="2" fill="#d9a032"/><rect x="3" y="10" width="2" height="2" fill="#2b221e"/><rect x="7" y="10" width="2" height="2" fill="#2b221e"/></svg><span><b>The guard</b> is the gateway. It reads the badge on every single call and says yes or no.</span></li>
+    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="0" y="3" width="12" height="1" fill="#b4553e"/><rect x="0" y="8" width="12" height="1" fill="#b4553e"/><rect x="1" y="2" width="1" height="10" fill="#2b221e"/><rect x="5" y="2" width="1" height="10" fill="#2b221e"/><rect x="10" y="2" width="1" height="10" fill="#2b221e"/></svg><span><b>The pen</b> holds a robot whose badge the operator took away (REVOKE). Every call it makes there is refused.</span></li>
+    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="9" y="0" width="2" height="1" fill="#d8cbb3"/><rect x="9" y="1" width="2" height="5" fill="#2b221e"/><rect x="0" y="4" width="3" height="2" fill="#b4553e"/><rect x="3" y="4" width="3" height="2" fill="#b4553e"/><rect x="0" y="3" width="1" height="1" fill="#b4553e"/><rect x="3" y="3" width="1" height="1" fill="#b4553e"/><rect x="6" y="3" width="1" height="1" fill="#b4553e"/><rect x="0" y="6" width="12" height="6" fill="#b4553e"/><rect x="2" y="8" width="2" height="2" fill="#bfe0ec"/><rect x="7" y="8" width="3" height="4" fill="#2b221e"/></svg><span><b>The Factory</b> makes agents, ranks them (Bronze, Silver, Gold, Diamond) and inspects the ones that misbehaved in its bay.</span></li>
+    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="2" y="0" width="8" height="12" fill="#fbf7ee"/><rect x="2" y="0" width="8" height="1" fill="#2b221e"/><rect x="2" y="11" width="8" height="1" fill="#2b221e"/><rect x="1" y="0" width="1" height="12" fill="#2b221e"/><rect x="10" y="0" width="1" height="12" fill="#2b221e"/><rect x="3" y="3" width="6" height="1" fill="#7a6f62"/><rect x="3" y="5" width="6" height="1" fill="#7a6f62"/><rect x="3" y="7" width="4" height="1" fill="#7a6f62"/><rect x="7" y="8" width="3" height="3" fill="#3f8a56"/></svg><span><b>The ledger</b> (gatehouse) is the record of every call. Each row carries the fingerprint of the one before it (the hash chain), so nobody can change it quietly.</span></li>
+  </ol>
+  <div class="keys"><span><b>H</b>hide panels</span><span><b>F</b>the Factory</span><span><b>?</b>this help</span><span><b>G</b>the ledger room</span><span><b>T</b>every event</span><span><b>A</b>architecture</span><span><b>R</b>play the recording</span><span><b>Esc</b>back</span><span>click a robot or a building</span></div>
+</div>
 <div id="arch" class="sheet paper"></div>
 
 <script src="three-d-stage.js"></script>

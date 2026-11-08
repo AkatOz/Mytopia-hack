@@ -83,24 +83,25 @@ test('a gate stays locked while any agent has one of its tools pulled', () => {
   assert.ok(last.effects.some((f) => f.kind === 'padlock' && f.gate === 'files' && f.on === false));
 });
 
-test('quarantine: drawn like a revoke (chief, pen, plate red) with the QUARANTINED banner, and no ack', () => {
+// Build 3 changed this on purpose (docs/BUILD3.md section 6): a quarantine goes to the inspection bay, not the pen.
+test('quarantine: drawn like a revoke (chief escort, plate red) into the inspection bay, QUARANTINED banner, no ack', () => {
   const { s, all } = upTo(11);
   const a = s.agents['research-bot'], fx = all[10];
   assert.equal(isQuarantine(rec[10]), true);
   assert.equal(a.plate, 'revoked');
   assert.equal(a.quarantined, true);
-  assert.equal(a.at, 'pen');
+  assert.equal(a.at, 'bay');
   assert.equal(s.gates.mail.refused, 3);                // three refusals at the Mail gate first
   assert.ok(fx.some((f) => f.kind === 'banner' && f.text === 'QUARANTINED'));
   assert.ok(!fx.some((f) => f.kind === 'banner' && f.text === 'REVOKED'));
   assert.ok(!fx.some((f) => f.kind === 'ack'));
   assert.ok(fx.some((f) => f.kind === 'halt'));
-  assert.deepEqual(scriptOf(fx).steps[0], { escort: { by: 'chief', to: 'pen_gate' } });
+  assert.deepEqual(scriptOf(fx).steps[0], { escort: { by: 'chief', to: 'bay_lift' } });
   assert.deepEqual(statusPill(a), ['QUARANTINED', 'revoked']);
   assert.match(tickerLine(rec[10]), /^QUARANTINED admin: badge pulled by quarantine/);
-  // the refusal after it is drawn over the pen and carries no ms (a quarantine starts no clock)
+  // the refusal after it is drawn over the bay and carries no ms (a quarantine starts no clock)
   const after = run(rec).all[11];
-  assert.ok(scriptOf(after).steps.some((st) => st.fx && st.fx.kind === 'stampAt' && st.fx.anchor === 'pen'));
+  assert.ok(scriptOf(after).steps.some((st) => st.fx && st.fx.kind === 'stampAt' && st.fx.anchor === 'bay'));
   assert.equal(run(rec).s.agents['research-bot'].revokeMs, null);
 });
 
@@ -141,11 +142,13 @@ test('ID card lines: client and expiry from run_started, signature expiry from a
   assert.equal(idCards(run(demo.slice(0, 6)).all[5])[0].at, 'gate:mail');
 });
 
-test('the chips: allowed and pulled ones act, never-on-badge ones do not, "sent..." only for the agent it acts on', () => {
+// Build 3 changed the chips on purpose: a tool never on the badge is now 'grant' (or 'locked' above the tier's ceiling,
+// with a hint), and a held chip no longer acts. tests/factory.test.mjs covers all five states.
+test('the chips: allowed and pulled ones act, "sent..." only for the agent it acts on', () => {
   const a = upTo(4).s.agents['research-bot'];
-  assert.deepEqual(chipState(a, 'read_file'), { state: 'on', act: 'revoke', sent: false });
-  assert.deepEqual(chipState(a, 'create_issue'), { state: 'pulled', act: 'restore', sent: false });
-  assert.deepEqual(chipState(a, 'send_email'), { state: 'off', act: '', sent: false });  // clicking it does nothing
+  assert.deepEqual(chipState(a, 'read_file'), { state: 'on', act: 'revoke', sent: false, hint: '' });
+  assert.deepEqual(chipState(a, 'create_issue'), { state: 'pulled', act: 'restore', sent: false, hint: '' });
+  assert.deepEqual(chipState(a, 'send_email'), { state: 'locked', act: '', sent: false, hint: 'Gold+' });  // research-bot is Silver
   assert.equal(chipState(a, 'read_file', { 'tool:read_file': 'research-bot' }).sent, true);
   assert.equal(chipState(a, 'read_file', { 'tool:read_file': 'ops-bot' }).sent, false);
   const held = run(rec).s.agents['research-bot'];                  // quarantined: allowed tools are held

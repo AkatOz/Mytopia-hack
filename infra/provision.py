@@ -37,9 +37,11 @@ GATEWAY_ROLE = "mytopia-gateway-role"
 TAGS = [{"Key": "project", "Value": "mytopia"}]
 
 SEED_ROWS = [
-    {"agent": "research-bot", "name": "Research Bot", "color": "mustard",
+    {"agent": "research-bot", "name": "Research Bot", "color": "mustard", "tier": "silver",
+     "role": "reads documents and files tickets", "made_by": "seed",
      "allowed_tools": ["read_file", "search_files", "create_issue", "list_issues"]},
-    {"agent": "ops-bot", "name": "Ops Bot", "color": "sage", "allowed_tools": ["read_file"]},
+    {"agent": "ops-bot", "name": "Ops Bot", "color": "sage", "tier": "bronze", "role": "reads documents",
+     "made_by": "seed", "allowed_tools": ["read_file"]},
 ]
 PLACEHOLDER_HANDLER = (
     '"""Placeholder MYTOPIA tools handler, deployed because tools_lambda/handler.py was missing."""\n'
@@ -83,7 +85,8 @@ def plan_lines() -> list[str]:
         f"dynamodb table '{EVENTS_TABLE}' (PK pk S, SK seq N, on-demand)",
         f"iam role '{EXEC_ROLE}' (trust lambda.amazonaws.com, inline logs policy)",
         f"lambda '{FUNCTION}' (python3.12, handler.handler, zip of {HANDLER_FILE}, timeout 15 s)",
-        f"iam role '{GATEWAY_ROLE}' (trust: participant role, 1 h, GetItem/UpdateItem agents, PutItem/Query events, InvokeFunction)",
+        f"iam role '{GATEWAY_ROLE}' (trust: participant role, 1 h, GetItem/UpdateItem/PutItem/DeleteItem/Scan agents, "
+        "PutItem/Query events, InvokeFunction, Create/DeleteUserPoolClient on the pool)",
         f"write {ROLE_FILE}",
         f"write [profile gateway] into {CONFIG_FILE} (credential_process {CREDS_SCRIPT})",
         f"write MODE=aws TOOLS_MODE=lambda TOKEN_MODE=cognito COGNITO_POOL_ID GATEWAY_ROLE_ARN AWS_* into {GATEWAY_ENV}",
@@ -151,14 +154,19 @@ def gateway_profile_lines() -> list[str]:
     return [f'credential_process = "{py}" -I "{script}"', f"region = {REGION}"]
 
 
-def gateway_policy(account: str) -> dict:
-    """The gateway role's only permissions: two tables and one function."""
+def gateway_policy(account: str, pool_id: str) -> dict:
+    """The gateway role's only permissions: two tables, one function, and the Factory's app clients in one pool.
+    The Factory (build 3) mints and retires agents: PutItem/DeleteItem/Scan on the agents table and
+    Create/DeleteUserPoolClient on the pool. infra/role_policy.py puts this same text."""
     table = f"arn:aws:dynamodb:{REGION}:{account}:table/"
     return {"Version": "2012-10-17", "Statement": [
-        {"Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"], "Resource": table + AGENTS_TABLE},
+        {"Effect": "Allow", "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:PutItem",
+                                       "dynamodb:DeleteItem", "dynamodb:Scan"], "Resource": table + AGENTS_TABLE},
         {"Effect": "Allow", "Action": ["dynamodb:PutItem", "dynamodb:Query"], "Resource": table + EVENTS_TABLE},
         {"Effect": "Allow", "Action": "lambda:InvokeFunction",
          "Resource": f"arn:aws:lambda:{REGION}:{account}:function:{FUNCTION}"},
+        {"Effect": "Allow", "Action": ["cognito-idp:CreateUserPoolClient", "cognito-idp:DeleteUserPoolClient"],
+         "Resource": f"arn:aws:cognito-idp:{REGION}:{account}:userpool/{pool_id}"},
     ]}
 
 
@@ -342,7 +350,7 @@ def provision() -> None:
     print(f"lambda {function_arn} ({len(code)} bytes)", flush=True)
 
     role_arn = ensure_role(iam, GATEWAY_ROLE, trust({"AWS": participant_arn}), "mytopia-gateway-narrow",
-                           gateway_policy(account))
+                           gateway_policy(account, pool_id))
     print(f"role {role_arn}", flush=True)
     print(f"test assume_role OK: {test_assume(sts, role_arn)}", flush=True)
 

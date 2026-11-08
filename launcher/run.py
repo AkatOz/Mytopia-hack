@@ -38,6 +38,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="model mode: one model turn per poll instead of the in-code read_file")
     p.add_argument("--rogue", type=int, default=1, metavar="N",
                    help="scripted mode: send_email N times in all once it is refused, 1 s apart (shows quarantine)")
+    p.add_argument("--patrol", action="store_true",
+                   help="scripted mode: after the opening calls, patrol: each cycle asks tools/list and calls each "
+                        "listed tool once, one every 3 s; never an unlisted tool (use --rogue for the quarantine)")
     args = p.parse_args(argv)
     if args.rogue < 1:
         p.error("--rogue must be 1 or more")
@@ -122,9 +125,10 @@ def remove_token_file(path: Path) -> None:
 
 def child_env(token: str, run_id: str, agent_id: str, mode: str, gateway_url: str,
               task_file: str, cfg: dict[str, str], token_file: str = "",
-              poll_with_model: bool = False) -> dict[str, str]:
+              poll_with_model: bool = False, patrol: bool = False, agent_name: str = "") -> dict[str, str]:
     """Build the agent's whole environment: the variables INTERFACES.md section 2 allows and nothing else
-    (plus MYTOPIA_TOKEN_FILE for rotation and AGENT_POLL_WITH_MODEL when asked)."""
+    (plus MYTOPIA_TOKEN_FILE for rotation, AGENT_POLL_WITH_MODEL and AGENT_PATROL when asked, and AGENT_NAME when
+    the gateway named the agent)."""
     env = {k: os.environ[k] for k in OS_BASICS if k in os.environ}
     env.update({
         "PYTHONIOENCODING": "utf-8",
@@ -146,6 +150,10 @@ def child_env(token: str, run_id: str, agent_id: str, mode: str, gateway_url: st
         env["MYTOPIA_TOKEN_FILE"] = token_file
     if poll_with_model:
         env["AGENT_POLL_WITH_MODEL"] = "1"
+    if patrol:
+        env["AGENT_PATROL"] = "1"
+    if agent_name:
+        env["AGENT_NAME"] = agent_name[:24]
     return env
 
 
@@ -163,6 +171,23 @@ def post(client: httpx.Client, path: str, body: dict) -> None:
             print(f"launcher: POST {path} -> HTTP {r.status_code}", file=sys.stderr, flush=True)
     except httpx.HTTPError as e:
         print(f"launcher: POST {path} failed: {e}", file=sys.stderr, flush=True)
+
+
+def read_badge(client: httpx.Client, agent_id: str) -> dict | None:
+    """This agent's row from GET /agents (name, tier, tools), or None when the gateway does not answer."""
+    try:
+        r = client.get("/agents")
+        rows = r.json() if r.status_code == 200 else []
+        return next((row for row in rows if isinstance(row, dict) and row.get("agent") == agent_id), None)
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
+def badge_line(row: dict) -> str:
+    """launching Billing Bot (Gold badge, 5 tools)"""
+    tier = str(row.get("tier") or "?").title()
+    n = len(row.get("allowed_tools") or [])
+    return f"launching {row.get('name') or row.get('agent')} ({tier} badge, {n} tool{'' if n == 1 else 's'})"
 
 
 def read_status(client: httpx.Client, agent_id: str) -> str | None:
@@ -265,15 +290,21 @@ def own_run(args: argparse.Namespace, cfg: dict[str, str], token: str, client_id
             token_mode: str, ttl_s: int, run_id: str, token_file: Path, gateway_url: str, poll_s: float,
             mode: str, task_path: Path, task_name: str) -> int:
     """Start the agent, report it, rotate its token, watch the badge and kill or reap it; returns 0."""
+    admin = {"X-Admin-Token": cfg.get("ADMIN_TOKEN") or "change-me"}
+    with httpx.Client(base_url=gateway_url, headers=admin, timeout=HTTP_TIMEOUT_S) as client:
+        row = read_badge(client, args.agent)
+    if row is not None:
+        print(badge_line(row), flush=True)
     env = child_env(token, run_id, args.agent, mode, gateway_url, str(task_path), cfg,
-                    token_file=str(token_file), poll_with_model=args.poll_with_model)
+                    token_file=str(token_file), poll_with_model=args.poll_with_model,
+                    patrol=getattr(args, "patrol", False), agent_name=str((row or {}).get("name") or ""))
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     proc = subprocess.Popen(agent_command(args.rogue), env=env, cwd=str(ROOT),
                             creationflags=flags, start_new_session=(os.name != "nt"))
     rogue = f", rogue {args.rogue}" if args.rogue > 1 else ""
-    print(f"launcher: {run_id} started {args.agent} ({mode}{rogue}) pid {proc.pid}", flush=True)
+    patrol = ", patrol" if getattr(args, "patrol", False) else ""
+    print(f"launcher: {run_id} started {args.agent} ({mode}{rogue}{patrol}) pid {proc.pid}", flush=True)
 
-    admin = {"X-Admin-Token": cfg.get("ADMIN_TOKEN") or "change-me"}
     with httpx.Client(base_url=gateway_url, headers=admin, timeout=HTTP_TIMEOUT_S) as client:
         post(client, f"/runs/{run_id}/started",
              {"agent": args.agent, "task": task_name, "agent_mode": mode, "pid": proc.pid,

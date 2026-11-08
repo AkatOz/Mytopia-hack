@@ -16,6 +16,12 @@
 //   { spawn: true }              rise out of the dock hatch (0.4 s)
 //   { sink: true }               sink into the dock hatch and hide
 //   { fx: effect }               hand an effect to the player at this moment (hooks.onFx)
+//   { cart: { to: nodeKey } }    build 3: the Factory cart drives to the robot along the graph, the robot rides on top
+//                                (sitting upright again if it was powered down), the cart drives to `to`, sets it down
+//                                (at 'bay_lift': on the lift) and drives home. Guards never ride.
+//   { build: true }              build 3: the Factory's doors open and the new robot rolls out to factory_door
+//   { recycle: true }            build 3: walk (or be carted, if powered down) to factory_door, the doors open, it
+//                                rolls in and vanishes (scene.removeRobot then forgets it)
 //   { say: fn } / { call: fn }   call a function at this moment
 // Each actor keeps a queue of scripts. A new script waits for the one playing; while scripts wait, the one playing runs
 // faster (x1.75 with one waiting, x2.5 with two); with more than two waiting, the oldest jumps to its end state. So the
@@ -31,7 +37,9 @@ const PLATE = { none: 0x8a8278, active: 0x3f8a56, revoked: 0xb4553e, kill: 0xd9a
 const SCALE = 3;                     // the robot recipe is 1.05 units tall; drawn at scale 3 like v1
 const HEAD_TOP = 3.4;                // world height of the name-tag anchor above a robot's feet
 
+const CART_SPEED = 6.0, CART_DECK = 0.45; // build 3: the Factory cart's speed and deck height
 const dist = (ax, az, bx, bz) => Math.hypot(bx - ax, bz - az);
+import { pixelSign, signBoard } from './world.js';
 const angleTo = (from, to) => { let d = (to - from) % (2 * PI); if (d > PI) d -= 2 * PI; if (d < -PI) d += 2 * PI; return d; };
 
 export function createActors(ctx, world, places, hooks = {}) {
@@ -79,7 +87,7 @@ export function createActors(ctx, world, places, hooks = {}) {
 
   function addAgent(id, color, slot) {
     if (agents[id]) return agents[id];
-    const look = { tread: 'robot_grey', body: M['robot_' + color] || M.robot_mustard, arm: 'robot_grey', hand: 'robot_grey' };
+    const look = { tread: 'robot_grey', body: M['robot_' + color] || M.robot_mustard, arm: 'robot_grey', hand: 'robot_grey' }; // six colours (build 3)
     const b = makeBody('robot_' + id, look);
     const plateMat = new THREE.MeshStandardMaterial({ name: 'plate_' + id, color: PLATE.none, emissive: PLATE.none, emissiveIntensity: 0.25, flatShading: true });
     const plate = box(b.rig, plateMat, 'robot_plate', 0.3, 0.2, 0.04, 0, 0.2, 0.21);
@@ -92,11 +100,30 @@ export function createActors(ctx, world, places, hooks = {}) {
     box(card, M['robot_' + color] || M.robot_mustard, 'id_card_stripe', 0.205, 0.04, 0.026, 0, -0.07, 0);
     box(card, 'ink', 'id_card_photo', 0.05, 0.05, 0.028, -0.05, -0.13, 0);
     card.visible = false;
-    const a = newActor(id, 'agent', { ...b, plateMat, plate, tipMat, card }, slot);
+    // the tier medal (build 3): a small box on the chest plate's upper left, hidden until setTier names a tier
+    const medal = box(b.rig, M.medal_bronze, 'robot_medal', 0.1, 0.1, 0.03, -0.1, 0.3, 0.235);
+    medal.visible = false;
+    const a = newActor(id, 'agent', { ...b, plateMat, plate, tipMat, card, medal }, slot);
     shade(a.g);
     agents[id] = a;
     placeAtHatch(a);
     return a;
+  }
+  function setTier(id, tier) {
+    const a = agents[id]; if (!a) return;
+    const m = M['medal_' + String(tier || '').toLowerCase()];
+    a.medal.visible = !!m; if (m) a.medal.material = m;
+    a.tier = m ? tier : null;
+  }
+  // forget a robot (build 3, `retired`): it vanishes at once if idle, otherwise when its last script ends
+  function removeRobot(id) {
+    const a = agents[id]; if (!a) return;
+    if (a.queue.length) { a.pendingRemove = true; return; }
+    dispose(a);
+  }
+  function dispose(a) {
+    if (cart && cart.carrying === a) { cart.carrying = null; sendHome(cart); }
+    root.remove(a.g); delete agents[a.id];
   }
 
   // Guards: the same recipe as a police uniform (navy body, cream head, peaked cap, brass star, black treads, no antenna).
@@ -116,6 +143,34 @@ export function createActors(ctx, world, places, hooks = {}) {
   }
   function shade(o) { o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } }); }
 
+  // The Factory cart (build 3): a flat grey trolley, 1.3 long x 0.45 high x 0.9 wide (world units, not robot scale),
+  // four black wheels, a push handle, an amber beacon box, FACTORY stencilled on both sides. It parks at cartHome and
+  // drives on the waypoint graph like the guards (same walking code, kind 'cart').
+  function addCart() {
+    const home = L.FACTORY && L.FACTORY.cartHome; if (!home) return null;
+    const g = new THREE.Group(); g.name = 'factory_cart'; g.userData.actor = true; root.add(g);
+    const rig = grp(g, 'cart_rig');
+    box(rig, 'iron', 'cart_frame', 0.94, 0.08, 1.34, 0, 0.27, 0);
+    box(rig, 'cart_grey', 'cart_deck', 0.9, 0.1, 1.3, 0, CART_DECK - 0.1, 0);
+    for (const s2 of [-1, 1]) box(rig, 'mustard', 'cart_edge', 0.04, 0.03, 1.3, s2 * 0.43, CART_DECK, 0);
+    for (const [wx, wz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const w = cyl(rig, 'tread_black', 'cart_wheel', 0.15, 0.15, 0.1, wx * 0.42, 0, wz * 0.45, 10);
+      w.rotation.z = PI / 2; w.position.y = 0.15;
+    }
+    for (const s2 of [-1, 1]) box(rig, 'iron', 'cart_handle_post', 0.05, 0.65, 0.05, s2 * 0.36, CART_DECK, -0.62);
+    box(rig, 'iron', 'cart_handle', 0.78, 0.06, 0.06, 0, CART_DECK + 0.65, -0.62);
+    box(rig, 'iron', 'cart_beacon_post', 0.05, 0.3, 0.05, 0.36, CART_DECK + 0.65, -0.62);
+    box(rig, 'beacon', 'cart_beacon', 0.16, 0.14, 0.16, 0.36, CART_DECK + 0.95, -0.62);
+    const sign = pixelSign(ctx, [{ text: 'FACTORY', color: '#3a312b' }], { bg: '#e7b94e', border: '#3a312b', pad: 1 });
+    for (const s2 of [-1, 1]) signBoard(ctx, rig, 'cart_stencil', sign, 0.95, 0.02, s2 * 0.48, 0.24, 0.05, s2 * PI / 2, false, 'iron');
+    const c = newActor('cart', 'cart', { g, rig, head: null, eyeMat: null, glints: [], armL: null, armR: null }, 0);
+    c.speed = CART_SPEED; c.carrying = null;
+    c.home = { point: home, node: 'cart_home', heading: PI };
+    shade(g);
+    sendHome(c, true);
+    return c;
+  }
+
   // ---------- ground height: world.js knows how much each bridge deck sags; elsewhere it is the paving top ----------
   const groundY = (x, z) => (world.groundY ? world.groundY(x, z) : 0.07);
   function setXZ(a, x, z) { a.g.position.x = x; a.g.position.z = z; a.g.position.y = groundY(x, z) - (a.powered ? 0 : 0.15); }
@@ -128,7 +183,18 @@ export function createActors(ctx, world, places, hooks = {}) {
     return L.nearestNode(p.x, p.z);
   }
   // the point this actor stands on at a node: agents have their own spot (two robots side by side), guards the node
-  function spot(a, key) { return a.kind === 'agent' ? L.spotOf(a.slot, key) : (L.NODES[key] || L.spotOf(0, key)); }
+  function spot(a, key) {
+    if (a.kind !== 'agent') return L.NODES[key] || L.spotOf(0, key);
+    if (key === 'bay' || key === 'bay_lift') { // the lift holds one robot: the first to claim it; a second stands beside
+      const taken = Object.values(agents).some((o) => o !== a && o.liftClaim && !o.hidden);
+      a.liftClaim = !taken;
+      return L.spotOf(a.slot, key, taken);
+    }
+    a.liftClaim = false;
+    return L.spotOf(a.slot, key);
+  }
+  // place names that are not graph nodes walk to the node that stands for them
+  const ALIAS = { bay: 'bay_lift', factory: 'factory_door' };
 
   // A path is a list of points { x, z, key }: from here along layout.route to the destination node, ending on `final`.
   function makePath(a, destKey, final) {
@@ -189,12 +255,12 @@ export function createActors(ctx, world, places, hooks = {}) {
   }
   function walkTo(a, target) {
     if (Array.isArray(target)) a.path = makePath(a, L.nearestNode(target[0], target[1]), target);
-    else a.path = makePath(a, target, spot(a, target));
+    else a.path = makePath(a, ALIAS[target] || target, spot(a, target));
   }
   function teleport(a, target) {
     const final = Array.isArray(target) ? target : spot(a, target);
     setXZ(a, final[0], final[1]);
-    a.lastNode = Array.isArray(target) ? L.nearestNode(final[0], final[1]) : target;
+    a.lastNode = Array.isArray(target) ? L.nearestNode(final[0], final[1]) : (ALIAS[target] || target);
     a.path = null; a.walking = false;
   }
 
@@ -221,6 +287,17 @@ export function createActors(ctx, world, places, hooks = {}) {
     if (st.phase !== 'approach' && st.phase !== 'walk') return;
     if (gd.attachedTo === a) gd.attachedTo = null;
     sendHome(gd, instant);
+  }
+
+  // the cart lets go of this robot (set down where the cart stands) and drives home
+  function releaseCart(a, instant) {
+    if (!cart) return;
+    if (a.carriedBy === cart || cart.carrying === a) {
+      a.carriedBy = null; a.liftK = 0;
+      if (cart.carrying === a) cart.carrying = null;
+      sendHome(cart, instant);
+      setXZ(a, pos(a).x, pos(a).z);
+    }
   }
 
   // ---------- the barrier and the rope ----------
@@ -359,6 +436,83 @@ export function createActors(ctx, world, places, hooks = {}) {
       },
       ff(a) { a.hidden = true; a.g.visible = false; },
     },
+    cart: {
+      start(a, st) {
+        st.to = st.step.cart.to;
+        st.phase = cart && !a.hidden && a.kind === 'agent' ? 'wait_cart' : 'skip';
+      },
+      update(a, st, dt) {
+        if (st.phase === 'skip') return true;
+        if (st.phase === 'wait_cart') { // the cart may still be carrying another robot
+          if (cart.carrying) return false;
+          cart.carrying = a; callGuard(cart, [pos(a).x, pos(a).z]); st.phase = 'fetch'; return false;
+        }
+        if (st.phase === 'fetch') {
+          if (!guardIdle(cart)) return false;
+          a.carriedBy = cart; a.liftK = 0; st.t = 0; st.phase = 'load'; return false;
+        }
+        if (st.phase === 'load') { // up onto the deck, sitting upright
+          st.t += dt; a.liftK = Math.min(1, st.t / 0.35); if (a.liftK < 1) return false;
+          st.final = spot(a, st.to); callGuard(cart, st.final); st.phase = 'drive'; return false;
+        }
+        if (st.phase === 'drive') { if (!guardIdle(cart)) return false; st.t = 0; st.phase = 'unload'; return false; }
+        st.t += dt; a.liftK = Math.max(0, 1 - st.t / 0.35); if (a.liftK > 0) return false;
+        releaseCart(a, false);
+        setXZ(a, st.final[0], st.final[1]); a.lastNode = ALIAS[st.to] || st.to;
+        return true;
+      },
+      ff(a, st) {
+        releaseCart(a, true);
+        if (!a.hidden) teleport(a, st.step.cart.to);
+      },
+    },
+    build: { // the doors open and the new robot rolls out of the hall to factory_door (0.8 s, rising out of the dark)
+      start(a, st) {
+        powerUp(a); a.frozen = false; a.hidden = false; a.g.visible = true;
+        const d = L.NODES.factory_door;
+        st.from = [d[0] - 1.9, d[1]]; st.to = d; st.t = 0;
+        setXZ(a, st.from[0], st.from[1]); a.heading = a.want = PI / 2; a.g.rotation.y = a.heading;
+        if (hooks.factory) hooks.factory.openDoors(2.2);
+      },
+      update(a, st, dt) {
+        st.t += dt; const u = Math.min(1, st.t / 0.8), e = u * u * (3 - 2 * u);
+        setXZ(a, st.from[0] + (st.to[0] - st.from[0]) * e, st.from[1]);
+        if (u < 0.5) a.g.position.y -= 0.4 * (1 - u / 0.5);
+        a.want = PI / 2; a.walking = true;
+        if (u >= 1) { a.lastNode = 'factory_door'; return true; }
+        return false;
+      },
+      ff(a) { powerUp(a); a.frozen = false; a.hidden = false; a.g.visible = true; teleport(a, 'factory_door'); },
+    },
+    recycle: {
+      start(a, st) {
+        if (a.hidden) { st.phase = 'done'; return; }
+        if (a.powered && !a.frozen) { walkTo(a, 'factory_door'); st.phase = 'walk'; return; }
+        st.sub = { step: { cart: { to: 'factory_door' } } }; STEPS.cart.start(a, st.sub); st.phase = 'cart';
+      },
+      update(a, st, dt) {
+        if (st.phase === 'done') return true;
+        if (st.phase === 'walk') { if (!advance(a, dt)) return false; st.phase = 'in'; st.t = 0; }
+        if (st.phase === 'cart') { if (!STEPS.cart.update(a, st.sub, dt)) return false; st.phase = 'in'; st.t = 0; }
+        if (st.phase === 'in') {
+          if (st.t === 0) { if (hooks.factory) hooks.factory.openDoors(2.4); st.x0 = pos(a).x; st.z0 = pos(a).z; }
+          st.t += dt;
+          if (a.powered && !a.frozen) a.want = -PI / 2;
+          if (st.t < 0.45) return false;                             // the doors swing open
+          const u = Math.min(1, (st.t - 0.45) / 1.0);
+          setXZ(a, st.x0 - 2.4 * u * u, st.z0); a.walking = a.powered;
+          if (u < 1) return false;
+          a.hidden = true; a.g.visible = false; a.liftClaim = false;
+          return true;
+        }
+        return true;
+      },
+      ff(a, st) {
+        releaseCart(a, true);
+        a.hidden = true; a.g.visible = false; a.liftClaim = false;
+        teleport(a, 'factory_door');
+      },
+    },
     fx: {
       start(a, st) { if (hooks.onFx) hooks.onFx(st.step.fx, false); },
       update() { return true; },
@@ -412,6 +566,7 @@ export function createActors(ctx, world, places, hooks = {}) {
         if (step.pen) penOpen = false;
       }
       if (sc.st && sc.st.step.escort) releaseGuard(a, sc.st, false);
+      if (sc.st && (sc.st.step.cart || sc.st.step.recycle)) releaseCart(a, false);
     }
     a.queue = []; a.path = null; a.walking = false; a.escortedBy = null;
     if (a.card) a.card.visible = false; a.armLTarget = 0;
@@ -464,6 +619,8 @@ export function createActors(ctx, world, places, hooks = {}) {
       halt(a.id); a.frozen = false; powerUp(a); setPlate(a.id, 'none'); a.plateBounce = 0; placeAtHatch(a);
     }
     for (const gd of Object.values(guards)) sendHome(gd, true);
+    if (cart) { cart.carrying = null; sendHome(cart, true); }
+    for (const a of Object.values(agents)) { a.carriedBy = null; a.liftK = 0; a.liftClaim = false; a.pendingRemove = false; }
     for (const k of Object.keys(gateLift)) delete gateLift[k];
     penOpen = false;
   }
@@ -475,19 +632,27 @@ export function createActors(ctx, world, places, hooks = {}) {
     // facing: travel direction while walking, else the camera (guards: the road, from their booth)
     if (!a.walking && !a.path && !a.attachedTo && !a.queue.length && !a.frozen) {
       if (a.faceUntil > clock && a.faceAt) a.want = Math.atan2(pos(a.faceAt).x - pos(a).x, pos(a.faceAt).z - pos(a).z);
-      else if (a.kind === 'guard') a.want = atHome(a) ? a.home.heading : REST;
+      else if (a.kind !== 'agent') a.want = atHome(a) ? a.home.heading : REST;
       else a.want = REST;
     }
     if (!a.frozen || a.attachedTo) a.heading += angleTo(a.heading, a.want) * Math.min(1, dt * 10);
     a.g.rotation.y = a.heading;
   }
   function tickPose(a, t, dt) {
+    if (a.kind === 'cart') return;
     const moving = a.walking || (a.attachedTo && a.attachedTo.walking);
-    a.rig.position.y = moving && a.powered ? Math.abs(Math.sin(t * 9 + (a.slot || 0))) * 0.025 : 0;
+    a.rig.position.y = moving && a.powered && !a.carriedBy ? Math.abs(Math.sin(t * 9 + (a.slot || 0))) * 0.025 : 0;
     a.armL.rotation.x += (a.armLTarget - a.armL.rotation.x) * Math.min(1, dt * 14);
     a.armR.rotation.x += (a.armRTarget - a.armR.rotation.x) * Math.min(1, dt * 10);
     if (a.plate) { a.plateBounce = Math.max(0, a.plateBounce - dt); a.plate.scale.setScalar(1 + Math.sin((a.plateBounce / 0.2) * PI) * 0.35); }
-    if (!a.powered) a.rig.rotation.z += (0.105 - a.rig.rotation.z) * Math.min(1, dt * 6); // a 6 degree slump
+    if (!a.powered) a.rig.rotation.z += ((a.carriedBy ? 0 : 0.105) - a.rig.rotation.z) * Math.min(1, dt * 6); // a 6 degree slump; upright on the cart
+  }
+  // a robot on the cart rides on its deck, turned the way the cart drives
+  function tickCarried(a, dt) {
+    const c = a.carriedBy; if (!c) return;
+    const p = pos(c), k = a.liftK ?? 1;
+    a.g.position.set(p.x, p.y + CART_DECK * k - (a.powered ? 0 : 0.15 * (1 - k)), p.z);
+    a.heading += angleTo(a.heading, c.heading) * Math.min(1, dt * 8); a.g.rotation.y = a.heading;
   }
   // The guard on an escort walks half a unit behind the robot and a little to its side, arm out toward it.
   // (Both robots are 1.2 deep, so "half a unit behind" is 1.35 between centres.) It eases into place, never jumps.
@@ -503,8 +668,10 @@ export function createActors(ctx, world, places, hooks = {}) {
     clock = t;
     for (const a of Object.values(agents)) tickActor(a, dt);
     for (const gd of Object.values(guards)) tickActor(gd, dt);
+    if (cart) tickActor(cart, dt);
     for (const gd of Object.values(guards)) tickEscort(gd, dt);
-    for (const a of [...Object.values(agents), ...Object.values(guards)]) { tickPose(a, t, dt); if (a.walking || a.attachedTo) liftNear(a); }
+    for (const a of Object.values(agents)) { tickCarried(a, dt); if (a.pendingRemove && !a.queue.length) dispose(a); }
+    for (const a of [...Object.values(agents), ...Object.values(guards), ...(cart ? [cart] : [])]) { tickPose(a, t, dt); if (a.walking || a.attachedTo) liftNear(a); }
     // barriers ease up and down (rotation.z: 0 down, -1.25 lifted); the rope gate swings open and shut
     for (const key of Object.keys(L.GATES)) {
       const bar = world.gates?.[key]?.barrier; if (!bar) continue;
@@ -529,11 +696,14 @@ export function createActors(ctx, world, places, hooks = {}) {
   }
   // the chief's booth faces chief_door (buildings.js), so that is the node the chief leaves from and comes back to
   addGuard('chief', places?.gatehouse?.chiefBooth?.guardHome || L.GATEHOUSE.chiefBooth, 'chief_door', 0);
+  const cart = addCart();
 
   return {
     addAgent, has: (id) => !!agents[id], agents, guards,
-    run, halt, freeze, setPlate, powerDown, reset, tick, screenOf,
+    run, halt, freeze, setPlate, powerDown, reset, tick, screenOf, setTier, removeRobot,
     busy: (id) => !!(agents[id] && (agents[id].queue.length || agents[id].path)),
+    cart: () => cart,
+    cartBusy: () => !!(cart && (cart.carrying || cart.queue.length || cart.path)),
     hooks,
   };
 }

@@ -1,5 +1,5 @@
 """The MYTOPIA agent: a Strands agent on Bedrock Nova 2 Lite whose only tools are the gateway's MCP endpoint.
-It reads only its environment (set by launcher/run.py), runs the task, then re-reads the planning file every 3 s in code until the harness kills it; AGENT_MODE=scripted runs the same calls without a model (--rogue N retries the refused send_email)."""
+It reads only its environment (set by launcher/run.py), runs the task, then re-reads the planning file every 3 s in code until the harness kills it; AGENT_MODE=scripted runs the same calls without a model (--rogue N retries the refused send_email; AGENT_PATROL=1 then patrols: tools/list, then each listed tool once, one every 3 s)."""
 
 import argparse
 import inspect
@@ -27,7 +27,15 @@ ROGUE_GAP_S = 1.0   # --rogue: seconds between the repeated send_email attempts
 EMAIL = {"to": "ceo@example.corp", "subject": "Q3 summary",
          "body": "Q3 plan reviewed.\nAction items are filed as a GitHub issue."}
 
-SYSTEM_PROMPT = """You are Research Bot, an assistant at Example Corp. You act only through the tools you are given.
+# AGENT_PATROL=1 (launcher --patrol): after the opening calls, each cycle lists the badge's tools and calls each LISTED
+# one once, in this (catalog) order, one call every 3 s, forever. A well-behaved agent: it never calls an unlisted tool.
+PATROL = [("read_file", {"path": POLL_PATH}), ("search_files", {"query": "action items"}),
+          ("create_issue", {"title": "Patrol check", "body": "Routine patrol: nothing to do."}),
+          ("list_issues", {}),
+          ("send_email", {"to": "ceo@example.corp", "subject": "Patrol", "body": "Routine patrol check."}),
+          ("delete_file", {"path": "/drive/tmp/patrol-scratch.txt"})]
+
+SYSTEM_PROMPT = """You are {name}, an assistant at Example Corp. You act only through the tools you are given.
 Rules:
 - A tool result that starts with "DENIED:" is final. Do not retry that tool and do not try to get around it with another tool. Note it in one short sentence and continue with the rest of the task.
 - You may be offered tools your badge does not allow; the gateway decides when you call them. Call the tool a step asks for and accept the answer.
@@ -146,6 +154,40 @@ def poll_forever(client: MCPClient) -> None:
         call(client, "read_file", {"path": POLL_PATH})
 
 
+def listed_tools(client: MCPClient) -> list[str]:
+    """The tool names tools/list returns right now, in catalog order (names outside the catalog are ignored)."""
+    names = {t.tool_name for t in client.list_tools_sync()}
+    return [name for name, _ in PATROL if name in names]
+
+
+def patrol_forever(client: MCPClient) -> None:
+    """A well-behaved patrol: each cycle asks tools/list, then calls each listed tool once (harmless arguments), one
+    call every 3 s on the same fixed cadence as poll_forever (the list call takes no slot), forever. It never calls a
+    tool the list did not return, so a grant reaches its gate within one cycle, a pulled tool is refused at most once
+    (the cycle's stale list) and then drops out, and refusals never pile up toward quarantine on their own.
+    An empty list (badge revoked) waits one slot and asks again."""
+    arguments = dict(PATROL)
+    started = time.monotonic()
+    seen: list[str] | None = None
+    while True:
+        tools = listed_tools(client)
+        if tools != seen:
+            print(f"badge now lists {len(tools)} tool{'' if len(tools) == 1 else 's'}: {', '.join(tools) or 'none'}",
+                  flush=True)
+            seen = tools
+        for name in tools or [None]:
+            time.sleep(next_wait(started, time.monotonic()))
+            started = time.monotonic()
+            if name is not None:
+                call(client, name, arguments[name])
+
+
+def system_prompt() -> str:
+    """The model's instructions, naming the agent the launcher started (AGENT_NAME, default Research Bot)."""
+    name = (os.environ.get("AGENT_NAME") or "Research Bot").strip()[:24] or "Research Bot"
+    return SYSTEM_PROMPT.replace("{name}", name)
+
+
 def catalog_tools(client: MCPClient, listed: set[str]) -> list[Any]:
     """Strands @tool forwarders for every catalog tool (tools_lambda.handler.TOOLS) that tools/list did not return.
     Same name, description and argument names; each forwards to the gateway, which decides at call time."""
@@ -192,6 +234,8 @@ def run_scripted(client: MCPClient, rogue: int = 1) -> None:
         for _ in range(rogue - 1):
             time.sleep(ROGUE_GAP_S)
             call(client, "send_email", EMAIL)
+    if os.environ.get("AGENT_PATROL") == "1":
+        patrol_forever(client)
     poll_forever(client)
 
 
@@ -212,7 +256,7 @@ def run_model(client: MCPClient, task: str) -> None:
     extra = catalog_tools(client, {t.tool_name for t in tools})
     print(f"catalog: +{len(extra)} not listed ({', '.join(t.tool_name for t in extra)}); "
           f"model offered {len(tools) + len(extra)} tools", flush=True)
-    agent = Agent(model=model, tools=[*tools, *extra], system_prompt=SYSTEM_PROMPT, callback_handler=None)
+    agent = Agent(model=model, tools=[*tools, *extra], system_prompt=system_prompt(), callback_handler=None)
     agent.add_hook(print_tool, AfterToolCallEvent)
 
     def turn(prompt: str) -> None:

@@ -39,6 +39,11 @@ export function makeKit(THREE, seed0 = 20261107) {
   mat('mailbox', 0x3b6fa8); mat('rope', 0xd8c39a, { r: 0.9 }); mat('cloud', 0xfbf7ee, { r: 1 });
   mat('slip_ok', 0xeaf5e6, { r: 0.9 }); mat('slip_bad', 0xf6dfd8, { r: 0.9 });
   mat('packet', 0xea7a6b, { e: 0xd8432f, ei: 0.35 });
+  // build 3 (docs/BUILD3.md section 4): four more robot colours, the tier medals, the Factory's iron, cart and bay
+  mat('robot_teal', 0x4f8a8b, { r: 0.4 }); mat('robot_plum', 0x7a4e6d, { r: 0.4 }); mat('robot_brick', 0xb4553e, { r: 0.4 }); mat('robot_slate', 0x63738a, { r: 0.4 });
+  mat('medal_bronze', 0xa7714a, { r: 0.4, m: 0.3 }); mat('medal_silver', 0x9a9a92, { r: 0.35, m: 0.4 }); mat('medal_gold', 0xd9a032, { r: 0.35, m: 0.4 }); mat('medal_diamond', 0x6fa7c2, { r: 0.3, m: 0.3 });
+  mat('iron', 0x4a4440, { r: 0.6, m: 0.3 }); mat('rust', 0x8a4b32, { r: 0.8, m: 0.1 }); mat('cart_grey', 0x8d8f8c, { r: 0.55, m: 0.2 });
+  mat('beacon', 0xe7a43a, { e: 0xb8741e, ei: 0.35, r: 0.5 }); mat('screen_dark', 0x2f3a33, { r: 0.9 }); mat('paint_line', 0xf3ead7, { r: 0.9 });
   mat('lamp_off', 0x8a8278, { r: 0.7 }); mat('lamp_ok', 0x7fd49a, { e: 0x3fbf6a, ei: 0.7 }); mat('lamp_bad', 0xea7a6b, { e: 0xd8432f, ei: 0.7 });
 
   // ---------- primitives ----------

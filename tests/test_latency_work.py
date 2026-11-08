@@ -352,6 +352,10 @@ class FakeDynamo:
         self.calls.append(("update_item", kwargs))
         return {"Attributes": self.item}
 
+    def scan(self, **kwargs: Any) -> dict:
+        self.calls.append(("scan", kwargs))
+        return {"Items": [self.item]}
+
 
 class FakeSession:
     def __init__(self, dynamo: FakeDynamo) -> None:
@@ -396,10 +400,13 @@ def test_dynamo_registry_set_tools_is_one_conditional_update_of_the_tool_list() 
     assert dynamo.calls[1][1]["ExpressionAttributeValues"][":allowed_tools"] == {"L": []}
     dynamo.calls.clear()
     registry.reset()  # both rows ACTIVE and back to the seed tool lists
-    tool_updates = [kw["ExpressionAttributeValues"][":allowed_tools"] for _, kw in dynamo.calls
-                    if ":allowed_tools" in kw["ExpressionAttributeValues"]]
+    tool_updates = [kw["ExpressionAttributeValues"][":allowed_tools"] for name, kw in dynamo.calls
+                    if name == "update_item" and ":allowed_tools" in kw["ExpressionAttributeValues"]]
     assert tool_updates == [{"L": [{"S": t} for t in ("read_file", "search_files", "create_issue", "list_issues")]},
                             {"L": [{"S": "read_file"}]}]
+    tiers = [kw["ExpressionAttributeValues"].get(":tier") for name, kw in dynamo.calls
+             if name == "update_item" and ":allowed_tools" in kw["ExpressionAttributeValues"]]
+    assert tiers == [{"S": "silver"}, {"S": "bronze"}]  # reset writes the seed tiers onto old rows too
 
 
 # ----- D: warm-up and keep-warm -----

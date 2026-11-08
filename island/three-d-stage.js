@@ -283,6 +283,7 @@
       const fit = () => {
         const w = this.clientWidth || 1;
         const h = this.clientHeight || 1;
+        const px = this._px; // setPixel(px) changes it at run time (the rooms render at 1, the island at 2)
         if (px) {
           // TV pass: with the `sharp` attribute a pixel block is `px` SCREEN pixels, not `px` CSS pixels. On a 4K TV at
           // 150% scaling the old way drew 1280x720 and stretched it 3x; sharp draws 1920x1080 and stretches it 2x, so every
@@ -416,6 +417,16 @@
       s.background = bg;
       r.setRenderTarget(null);
       r.render(this._postScene, this._postCam);
+    }
+
+    /** Change the pixel block size at run time (pixel mode only): 1 renders at full resolution (the rooms' boards
+     *  read crisply), 2 is the island's look. The ortho frustum depends only on the aspect, so the framing holds. */
+    setPixel(px) {
+      px = Math.max(1, Math.round(Number(px) || 1));
+      if (!this._rtColor || !this._fit || this._px === px) return;
+      this._px = px;
+      this._renderer.domElement.style.imageRendering = px > 1 ? 'pixelated' : 'auto';
+      this._fit();
     }
 
     disconnectedCallback() {

@@ -3,6 +3,7 @@
 // a robot powering down. It only knows HOW to draw; the reducer decides WHEN (docs/ISLAND_V2.md section 4).
 // Pre-existing: the blocky smoke puffs and the falling packets come from v1's scene.js (Mytopia's smoke recipe). New
 // today: slips on a raised arc, lamps on any material with a timeout, the ladder moved from buildings to gate booths.
+// Build 3: the Factory chimneys' smoke (setChimneys, factorySmoke(fast)).
 export function createEffects(ctx, world, places) {
   const { THREE, kit, L } = ctx;
   const { M, gBox, put } = kit;
@@ -130,11 +131,40 @@ export function createEffects(ctx, world, places) {
     }
   }
 
+  // ---------- the Factory's chimneys (build 3): a grey-cream puff every 1.5 s, every 0.3 s for 8 s after a `created` ----------
+  // The puff recipe above, paler and slower, drifting a little west (screen-left, away from the bay and the yard).
+  const CHIMNEY = ['#ddd6ca', '#cfc7b9', '#b3aca2'];
+  let chimneys = [], smokeFastUntil = -1, nextChimney = 0;
+  const stacks = [];
+  function setChimneys(points) { chimneys = (points || []).filter(Boolean); }
+  function factorySmoke(fast = true) { if (fast) { smokeFastUntil = clock + 8; nextChimney = Math.min(nextChimney, clock); } }
+  function chimneyPuff(at, big) {
+    const m = new THREE.MeshStandardMaterial({ color: CHIMNEY[Math.floor(Math.random() * 3)], roughness: 1, flatShading: true, transparent: true, opacity: 0.92 });
+    const p = put(root, gBox(1, 1, 1), m, 'chimney_puff', at.x, at.y, at.z);
+    stacks.push({ p, t: 0, dur: big ? 2.6 : 3.4, size: big ? 0.5 : 0.36, dx: -0.28 + (Math.random() - 0.5) * 0.15, dz: 0.18 + (Math.random() - 0.5) * 0.15 });
+  }
+  function tickChimneys(dt) {
+    if (chimneys.length && clock >= nextChimney) {
+      const fast = clock < smokeFastUntil;
+      for (const c of chimneys) chimneyPuff(c, fast);
+      nextChimney = clock + (fast ? 0.3 : 1.5);
+    }
+    for (let i = stacks.length - 1; i >= 0; i--) {
+      const f = stacks[i]; f.t += dt;
+      const u = f.t / f.dur;
+      f.p.position.x += f.dx * dt; f.p.position.z += f.dz * dt; f.p.position.y += 1.0 * dt;
+      f.p.scale.setScalar(Math.round((f.size + u * 0.6) / 0.08) * 0.08);
+      f.p.material.opacity = 0.92 * Math.max(0, 1 - u);
+      if (u >= 1) { root.remove(f.p); f.p.material.dispose(); stacks.splice(i, 1); }
+    }
+  }
+
   // ---------- reset (page reload does this anyway; kept for a new chain) ----------
   function reset() {
     for (const s of slips.splice(0)) { root.remove(s.g); s.resolve(); }
     for (const p of stack.splice(0)) root.remove(p);
     for (const f of puffs.splice(0)) root.remove(f.p);
+    smokeFastUntil = -1;
     for (const mat of [...lampOff.keys()]) paint(mat, 'off');
     lampOff.clear();
     clearSmoke();
@@ -142,8 +172,8 @@ export function createEffects(ctx, world, places) {
 
   function tick(t, dt) {
     clock = t;
-    tickSlips(dt); tickPackets(dt); tickLamps(); tickSmoke(t); tickPuffs(dt);
+    tickSlips(dt); tickPackets(dt); tickLamps(); tickSmoke(t); tickPuffs(dt); tickChimneys(dt);
   }
 
-  return { slip, packet, lamp, smoke, clearSmoke, puff, reset, tick };
+  return { slip, packet, lamp, smoke, clearSmoke, puff, reset, tick, setChimneys, factorySmoke };
 }

@@ -33,6 +33,9 @@ class Settings:
     island_dir: Path | None = None      # override of the static folder served at /
     quarantine_after: int = 3           # allow-list refusals in the window that make the gateway pull the badge; 0 = off
     quarantine_window_s: float = 60.0   # the window those refusals are counted in
+    # the launcher's env file the Factory appends a minted agent's client id and secret to; None writes no file
+    # (Settings built in code, e.g. tests); from_env defaults it to agent/.env
+    agent_env: Path | None = None
 
     @classmethod
     def from_env(cls, env_file: Path = GATEWAY_DIR / ".env") -> "Settings":
@@ -66,6 +69,7 @@ class Settings:
             island_dir=resolve(island) if island else None,
             quarantine_after=int(get("QUARANTINE_AFTER", "3")),
             quarantine_window_s=float(get("QUARANTINE_WINDOW_S", "60")),
+            agent_env=resolve(get("AGENT_ENV", "agent/.env")),
         )
 
 

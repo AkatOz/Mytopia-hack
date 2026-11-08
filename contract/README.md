@@ -27,15 +27,24 @@ Identical in the gateway's memory, in DynamoDB, in `GET /events` and in the fixt
 
 - `seq`: a global counter the gateway assigns per chain. Consumers order by `seq`, never by the clock, and apply each `seq` once.
 - `ts`: UTC, ISO 8601 with milliseconds and `Z`, stamped by the gateway.
-- `decision` (closed set): `run_started`, `allow`, `deny`, `revoked`, `restored`, `kill_requested`, `run_stopped`.
-- `rule` (closed set): `allow-list`, `status-revoked`, `status-killed`, `token`, `registry-unavailable`, `header-mismatch`, `admin`, `harness`.
-- `tool`: one of `read_file`, `search_files`, `create_issue`, `list_issues`, `send_email`, `delete_file`, or `tools/list`, or `admin` (for `revoked`, `restored`, `kill_requested`), or `harness` (for `run_started`, `run_stopped`). A `deny` whose tool is `tools/list` belongs to the gatehouse, not to a tool building. A `revoked`/`restored` event whose tool names one of the six tools is a per-tool badge change; tool `admin` means the whole badge. A per-tool change has `rule` `admin`, `args_summary` `badge=<the tools now on the badge, comma-joined>` and `reason` `<tool> pulled from badge <agent> by operator` or `<tool> returned to badge <agent> by operator`. A whole-badge `revoked` with `args_summary` `quarantine: <n> refused calls in <s> s` was made by the gateway itself after repeated `allow-list` refusals (reason `badge pulled by quarantine after <n> refused calls in <s> s`).
+- `decision` (closed set): `run_started`, `allow`, `deny`, `revoked`, `restored`, `kill_requested`, `run_stopped`, `created`, `tier_changed`, `retired` (the last three since build 3: the Factory).
+- `rule` (closed set): `allow-list`, `status-revoked`, `status-killed`, `token`, `registry-unavailable`, `header-mismatch`, `admin`, `harness`, `factory`.
+- `tool`: one of `read_file`, `search_files`, `create_issue`, `list_issues`, `send_email`, `delete_file`, or `tools/list`, or `admin` (for `revoked`, `restored`, `kill_requested`, `created`, `tier_changed`, `retired`), or `harness` (for `run_started`, `run_stopped`). A `deny` whose tool is `tools/list` belongs to the gatehouse, not to a tool building. A `revoked`/`restored` event whose tool names one of the six tools is a per-tool badge change; tool `admin` means the whole badge. A per-tool change has `rule` `admin`, `args_summary` `badge=<the tools now on the badge, comma-joined>` and `reason` `<tool> pulled from badge <agent> by operator`, `<tool> returned to badge <agent> by operator`, or, for a grant of a tool the operator never pulled, `<tool> added to badge <agent> by operator` (read `badge=`, not the reason). A whole-badge `revoked` with `args_summary` `quarantine: <n> refused calls in <s> s` was made by the gateway itself after repeated `allow-list` refusals (reason `badge pulled by quarantine after <n> refused calls in <s> s`).
 - `agent_mode`: `model`, `scripted` or `replay`.
-- `args_summary`: at most 80 characters, never a secret.
+- `args_summary`: at most 120 characters (tool calls are cut at 80; the Factory's own rows may run to 120 so a whole badge fits), never a secret.
 - `ms_since_revoke`: a number only on the first `deny` after an operator `revoked` for that agent, and after a per-tool `revoked` only on the first `allow-list` deny of that agent for that tool; otherwise `null`. A quarantine `revoked` (`args_summary` starting `quarantine:`) starts no clock, so the deny after it has `null`.
 - `prev_hash`, `hash`: SHA-256 hex; `hash` covers the canonical JSON (`sort_keys`, compact separators) of the record without `hash`; the first record's `prev_hash` is `"genesis"`. The fixture's hashes are placeholders.
 - `run_stopped` carries the exit code in `reason` and the pid in `args_summary`. A kill is marked two ways: a `kill_requested` for that agent precedes it, and `reason` reads `exit <code> (killed by harness)` with `args_summary` `pid=<pid> killed by harness`. A run that ends on its own reads `exit <code> (exited)` and `pid=<pid> exited`; the island shows RUN ENDED for it, with no fire.
-- The gateway never restarts `seq` below the last value it served: on start it resumes the current chain's counter; only `POST /demo/reset` starts a new chain. The admin routes accept both agent ids.
+- The Factory's events (build 3) all have `tool` `admin`, `rule` `factory`, `latency_ms` 0 and `ms_since_revoke` `null`:
+
+  | decision | args_summary (at most 120 characters) | reason |
+  |---|---|---|
+  | `created` | `tier=gold tools=read_file,search_files,create_issue,list_issues,send_email color=teal` | `minted by the Factory: Gold badge, 5 tools, client 3f9a1c7e` |
+  | `tier_changed` | `tier=silver was=gold badge=read_file,search_files,create_issue,list_issues` | `Billing Bot demoted to Silver by operator (1 tool trimmed)` or `Billing Bot promoted to Diamond by operator` |
+  | `retired` | `made_by=factory client=3f9a1c7e` | `retired by operator: identity deleted, badge row removed` |
+
+  `badge=` in `tier_changed` is the tool list after the change (a demotion trims the badge to the new ceiling). A refused grant (a tool above the tier's ceiling) is never an event. No client secret is ever in an event.
+- The gateway never restarts `seq` below the last value it served: on start it resumes the current chain's counter; only `POST /demo/reset` starts a new chain. The admin routes accept every agent that has a badge row (the two seed agents and any the Factory minted).
 
 ## The HTTP API (`http://127.0.0.1:8787`)
 
@@ -58,7 +67,18 @@ Island-facing (read-only, no auth):
 
 ```text
 GET /events?since_seq=143   -> {"events":[... seq > 143, ascending, at most 200 ...], "server_ts":"...", "chain":"chain-..."}
-GET /agents                 -> [{"agent","name","client_id","status","allowed_tools","color"}, ...]
+GET /agents                 -> [{"agent","name","client_id","status","allowed_tools","color","tier","ceiling","role","made_by","created_at"}, ...]
+                               every badge whose status is ACTIVE, REVOKED or KILLED (a consistent Scan in AWS mode);
+                               tier is inferred from the tools for a row written before tiers; ceiling is the tier's tool list
+GET /tiers                  -> [{"tier":"bronze","rank":1,"name":"Bronze","line":"looks, never changes anything","ceiling":["read_file","search_files"]}, ... silver, gold, diamond]
+GET /agents/{id}/inquest    -> the deterministic report of the agent's latest run, computed from the chain in memory (404 for an unknown agent):
+                               {"agent","name","tier","run_id","client","outcome": "active|revoked|quarantined|killed|ended",
+                                "calls":{"allowed":7,"refused":3},
+                                "refused_by_tool":[{"tool":"delete_file","n":3,"rule":"allow-list","home":"admin"}],
+                                "first_refusal":{"tool","ts","reason"} | null,
+                                "trigger":{"kind":"quarantine|revoke|kill","ts","by":"gateway|operator","detail"} | null,
+                                "timings":{"revoke_to_first_deny_ms","kill_to_stopped_ms","decision_p50_ms"} (null where not measured),
+                                "chain":{"rows":11,"verified":true}, "verdict":"...", "recommendation":"..."}
 GET /config.js              -> window.MYTOPIA = {api: "", adminToken: "<token>", pollMs: 300, staleAfterMs: 3000};
 GET /healthz                -> {"ok": true, "mode": "local|aws", "tools_mode": "...", "token_mode": "..."}
 ```
@@ -72,9 +92,23 @@ POST /agents/{id}/kill      -> {"status":"KILLED","seq":14}
 POST /agents/{id}/tools/{tool}/revoke   -> {"status":"ACTIVE","seq":20,"agent":"research-bot","tool":"create_issue","allowed_tools":["read_file","search_files","list_issues"],"changed":true}
 POST /agents/{id}/tools/{tool}/restore  -> the same shape; asking for what the badge already has answers 200 with "changed":false, "seq":null and a "note", and logs nothing
                                            (unknown agent or action 404; a tool outside the six 400)
+                                           restore also GRANTS a tool that was never on the badge; above the tier's ceiling it answers
+                                           HTTP 403 {"error":"delete_file is above the Gold ceiling","tier":"gold","ceiling":[...]} and logs nothing
+POST /agents                {"agent":"billing-bot","name":"Billing Bot","tier":"gold","tools":["read_file",...],"color":"teal","role":"..."}
+                            -> 201 {"row": <the badge as GET /agents shows it, no secret>, "event": <the created event>}
+                               400 bad input (one sentence in "error"), 409 the agent exists, 503 identity provider or registry down
+                               (nothing is left half-made). agent matches ^[a-z][a-z0-9-]{2,23}$; name 1-24 characters; tools a
+                               non-empty subset of the tier's ceiling; color one of mustard, sage, teal, plum, brick, slate; role at most
+                               60 characters. The client secret goes only to the launcher's env file (AGENT_ENV, default agent/.env) as
+                               <AGENT>_CLIENT_ID and <AGENT>_CLIENT_SECRET under a "# minted by the Factory" line.
+POST /agents/{id}/tier      {"tier":"silver"} -> {"agent","tier","was","allowed_tools","ceiling","trimmed","status","changed":true,"seq"}
+                               a demotion trims the badge to the new ceiling; the same tier answers "changed":false, "seq":null and logs nothing
+POST /agents/{id}/retire    -> {"agent","retired":true,"identity_deleted":true,"seq","event"}   Factory-made agents only (a seed agent 409);
+                               deletes the identity (best effort), the badge row and the env lines
 POST /runs/{run_id}/started {"agent":"research-bot","task":"Q3 planning","agent_mode":"model","pid":4120,"client_id":"<optional>","expires_in":300} -> the event
 POST /runs/{run_id}/stopped {"exit_code":1,"how":"killed by harness"}                                   -> the event
-POST /demo/reset            -> {"ok":true,"chain":"chain-..."}   both agents ACTIVE with their seed tool lists, events cleared, new chain
+POST /demo/reset            -> {"ok":true,"chain":"chain-..."}   every Factory-made agent retired (best effort, no events), both seed agents
+                               ACTIVE with their seed tool lists and tiers (research-bot silver, ops-bot bronze), events cleared, new chain
 POST /demo/replay           -> {"ok":false,"recording":"/replay/demo.json","reason":"..."}   the gateway never re-runs a recording; the island plays it (press R, or ?replay=/replay/demo.json)
 ```
 

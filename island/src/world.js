@@ -5,6 +5,9 @@
 // bridges, gates, booths, the pixel-font signs, the dock and hatch, the pen's swinging rope, the bin label and clouds.
 // Every coordinate comes from layout.js (ctx.L); this file never decides where things go on its own, except scenery.
 // buildWorld(ctx) builds everything into one Group and returns handles the actors and effects animate.
+// Build 3 (docs/BUILD3.md section 4): the Factory island's ground and bridge (its buildings are in factory.js), the
+// dock moved to the south-west shore with two moored rowing boats, reeds at the shores, more trees and bushes on every
+// islet, six gulls circling over the harbour and two more clouds.
 
 const PI = Math.PI;
 const CAM = [Math.SQRT1_2, Math.SQRT1_2]; // the default camera looks from the south-east: signs face this way (x, z)
@@ -307,8 +310,13 @@ function buildTerrain(ctx, world) {
 // main island: avenue dock -> gatehouse, the plaza, gate aprons, booth pads, pen floor, bin pad, dirt paths
 function paintMainIsland(L, paint) {
   const N = L.NODES;
-  paint([[0, L.DOCK.z - 0.6], [0, L.GATEHOUSE.z + L.GATEHOUSE.d / 2 + 0.3]], 1.05, 'stone');
-  paint([[-1.4, L.DOCK.z - 2.0], [1.4, L.DOCK.z - 2.0]], 1.3, 'stone', true);          // land under the pier's root
+  const fb = L.BRIDGES.factory, [bx, bz] = fb.dir;
+  paint([[0, 8.2], [0, L.GATEHOUSE.z + L.GATEHOUSE.d / 2 + 0.3]], 1.05, 'stone');                // the avenue: south shore -> gatehouse
+  paint([N.plaza_s, [fb.from[0] + bx * 0.3, fb.from[1] + bz * 0.3]], 1.05, 'stone');            // avenue -> the Factory bridge
+  paint([[fb.from[0] + bx * 0.3, fb.from[1] + bz * 0.3], [fb.from[0] - bx * 1.5, fb.from[1] - bz * 1.5]], 1.1, 'stone', true); // the deck rests on paving
+  const root = dockRoot(L);
+  paint([root, [root[0] + 1.0, root[1] - 0.6]], 1.4, 'stone', true);                             // land under the pier's root
+  paint([N.dock, N.plaza_s], 0.75, 'stone');                                                      // dock -> avenue
   paint([N.plaza], 3.0, 'stone');
   paint([[-4.4, -2.5], [4.4, -2.5]], 0.9, 'stone');                                       // in front of the gatehouse
   for (const key of Object.keys(L.GATES)) {
@@ -326,13 +334,28 @@ function paintMainIsland(L, paint) {
 
 // islets: the bridge landing (forced stone), a path to the door, and a courtyard for the tower
 function paintIslets(L, paint) {
-  for (const key of Object.keys(L.BRIDGES)) {
+  for (const key of L.TOOL_ISLETS) {
     const b = L.BRIDGES[key], [ux, uz] = b.dir, d = L.DOORS[key];
     paint([[b.to[0] - ux * 0.3, b.to[1] - uz * 0.3], [b.to[0] + ux * 1.5, b.to[1] + uz * 1.5]], 1.1, 'stone', true);
     paint([L.NODES[`shore_${key}`], [d.x, d.z]], key === 'mail' ? 0.7 : 0.8, key === 'mail' ? 'dirt' : 'stone');
   }
   paint([[L.ISLANDS.files.x, L.ISLANDS.files.z]], 4.3, 'stone');
   paint([[L.DOORS.admin.x, L.DOORS.admin.z]], 1.6, 'stone');
+  paintFactory(L, paint);
+}
+
+// the Factory island: the bridge landing, the walk under the arch to the yard, the yard's apron, the hall's pad (forced:
+// the hall is big for the island and its corners must never hang over the edge), the bay's floor, the cart's lane
+function paintFactory(L, paint) {
+  const F = L.FACTORY, N = L.NODES, H = F.hall, b = L.BRIDGES.factory;
+  paint([[b.to[0] - b.dir[0] * 0.3, b.to[1] - b.dir[1] * 0.3], [b.to[0] + b.dir[0] * 1.6, b.to[1] + b.dir[1] * 1.6]], 1.1, 'stone', true);
+  paint([N.shore_factory, N.yard, N.factory_door], 0.9, 'stone');
+  paint([[F.yard.x - F.yard.w / 2 + 0.6, F.yard.z], [F.yard.x + F.yard.w / 2 - 0.6, F.yard.z]], 1.9, 'stone');
+  for (let x = H.x0 + 0.5; x <= H.x1 - 0.4; x += 1) paint([[x, H.z0 + 0.4], [x, H.z1 - 0.4]], 0.8, 'stone', true);
+  paint([[H.x1 + 0.9, H.z0 + 1.0], [H.x1 + 0.9, H.z1 - 0.5]], 0.9, 'dirt', true);                 // the apron along the east face
+  paint([F.bay.lift], 2.3, 'stone', true);
+  paint([N.yard, N.bay_gate, N.bay_lift], 0.8, 'stone');
+  paint([N.factory_door, N.bay_gate, N.cart_home], 0.7, 'dirt');
 }
 
 // The chief's booth. layout.GATEHOUSE.chiefBooth was [-4.8, -2.9], but a 1.4-wide booth there stands across the
@@ -430,21 +453,35 @@ function buildGate(ctx, parent, key) {
   };
 }
 
-// ---------- the dock: a plank pier sticking out south, with the round hatch the robots rise from ----------
+// ---------- the dock: a plank pier sticking out south-west, with the round hatch the robots rise from ----------
+// Build 3: the pier runs along layout.DOCK.dir from the shore; the group's local +z points out along the pier and the
+// hatch sits on its centre line HATCH_AT units out, so the hatch spots of six robots (three rows) all stand on planks.
+const HATCH_AT = 2.8;
+export const dockRoot = (L) => [L.DOCK.hatch[0] - L.DOCK.dir[0] * HATCH_AT, L.DOCK.hatch[1] - L.DOCK.dir[1] * HATCH_AT];
 function buildDock(ctx, parent) {
   const { THREE, kit, L } = ctx, { box, cyl, grp, pick } = kit;
-  const D = L.DOCK, z0 = D.z - 2.4, z1 = D.hatch[1] + D.pierLength * 0.6, w = 4.2;
-  const g = grp(parent, 'dock', D.x, 0, 0);
+  const D = L.DOCK, [rx, rz] = dockRoot(L), z0 = -1.2, z1 = HATCH_AT + 1.3 + 1.2, w = 4.2, h = HATCH_AT;
+  const g = grp(parent, 'dock', rx, 0, rz, Math.atan2(D.dir[0], D.dir[1]));
   box(g, 'wood_dark', 'pier_frame', w, 0.3, z1 - z0, 0, -0.29, (z0 + z1) / 2);
   for (let z = z0 + 0.21; z < z1; z += 0.42) box(g, pick(['plank', 'wood', 'plank']), 'pier_plank', w, 0.06, 0.38, 0, 0.01, z);
   for (const s of [-1, 1]) {
-    for (const z of [D.hatch[1] - 0.4, z1 - 0.3]) { cyl(g, 'wood_dark', 'pier_piling', 0.17, 0.17, 2.9, s * (w / 2 - 0.15), -2.6, z, 8); cyl(g, 'ink', 'piling_cap', 0.19, 0.19, 0.06, s * (w / 2 - 0.15), 0.3, z, 8); }
-    box(g, 'wood_dark', 'pier_crossbeam', 0.16, 0.18, z1 - D.hatch[1] + 0.2, s * (w / 2 - 0.15), -1.9, (D.hatch[1] - 0.4 + z1 - 0.3) / 2);
+    for (const z of [h - 1.6, z1 - 0.3]) { cyl(g, 'wood_dark', 'pier_piling', 0.17, 0.17, 2.9, s * (w / 2 - 0.15), -2.6, z, 8); cyl(g, 'ink', 'piling_cap', 0.19, 0.19, 0.06, s * (w / 2 - 0.15), 0.3, z, 8); }
+    box(g, 'wood_dark', 'pier_crossbeam', 0.16, 0.18, z1 - h + 1.8, s * (w / 2 - 0.15), -1.9, (h - 1.6 + z1 - 0.3) / 2);
   }
-  cyl(g, 'metal', 'hatch_ring', 1.62, 1.62, 0.05, 0, 0.07, D.hatch[1], 16);
-  cyl(g, 'ink', 'hatch_hole', 1.46, 1.46, 0.06, 0, 0.07, D.hatch[1], 16);
-  for (let i = 0; i < 4; i++) { const a = (i * PI) / 2 + PI / 4; box(g, 'mustard', 'hatch_bolt', 0.16, 0.06, 0.16, Math.cos(a) * 1.54, 0.07, D.hatch[1] + Math.sin(a) * 1.54); }
-  return { g, hatch: new THREE.Vector3(D.x + D.hatch[0], DECK_TOP, D.hatch[1]), endZ: z1 };
+  cyl(g, 'metal', 'hatch_ring', 1.62, 1.62, 0.05, 0, 0.07, h, 16);
+  cyl(g, 'ink', 'hatch_hole', 1.46, 1.46, 0.06, 0, 0.07, h, 16);
+  for (let i = 0; i < 4; i++) { const a = (i * PI) / 2 + PI / 4; box(g, 'mustard', 'hatch_bolt', 0.16, 0.06, 0.16, Math.cos(a) * 1.54, 0.07, h + Math.sin(a) * 1.54); }
+  // two rowing boats moored on the pier's sides, hanging in the air like everything else here, tied to the pilings
+  for (const s of [-1, 1]) {
+    const b = grp(g, 'rowing_boat', s * (w / 2 + 0.95), -0.55, h + 0.3 * s, s * 0.08);
+    box(b, 'wood_dark', 'boat_hull', 0.9, 0.22, 2.3, 0, 0, 0); box(b, s > 0 ? 'mailbox' : 'brick', 'boat_strake', 1.04, 0.2, 2.1, 0, 0.2, 0);
+    box(b, 'wood_light', 'boat_inside', 0.78, 0.06, 1.9, 0, 0.32, 0); box(b, 'wood_dark', 'boat_bow', 0.6, 0.3, 0.3, 0, 0.12, 1.25);
+    box(b, 'wood_dark', 'boat_stern', 0.8, 0.3, 0.12, 0, 0.12, -1.12);
+    for (const z of [-0.45, 0.4]) box(b, 'wood', 'boat_thwart', 0.86, 0.06, 0.24, 0, 0.36, z);
+    for (const o of [-1, 1]) { const oar = grp(b, 'boat_oar', o * 0.5, 0.42, 0, 0); oar.rotation.z = o * 0.25; box(oar, 'wood_light', 'oar', 0.06, 0.06, 1.7, o * 0.2, 0, -0.2); }
+    box(g, 'rope', 'boat_line', 0.06, 0.06, 1.0, s * (w / 2 + 0.3), -0.1, h + 0.9 * s, 0).rotation.y = s * 0.9;
+  }
+  return { g, hatch: new THREE.Vector3(D.hatch[0], DECK_TOP, D.hatch[1]), end: g.localToWorld(new THREE.Vector3(0, 0, z1)) };
 }
 
 // ---------- the pen: brass posts and velvet rope; the west rope segment swings open (rotation.y 0 shut, -1.5 open) ----------
@@ -489,19 +526,32 @@ function buildBin(ctx, parent) {
 // ---------- scenery placement (data, so tests/layout checks can read it) ----------
 // main island: [x, z, scale] trees, [x, z] lamps, [x, z, scale, flowers] bushes; kept clear of every walking edge
 export const PROPS = {
-  trees: [[-8.2, 3.2, 1.0], [-4.4, 6.8, 0.9], [4.4, 6.9, 0.85], [0.2, -8.5, 0.8], [-2.5, -8.4, 0.7], [2.8, -8.3, 0.75], [-6.3, 6.1, 0.8]],
+  trees: [[-8.2, 3.2, 1.0], [4.4, 6.9, 0.85], [0.2, -8.5, 0.8], [-2.5, -8.4, 0.7], [2.8, -8.3, 0.75], [-8.2, 5.9, 0.8],
+    [8.4, -3.6, 0.8], [-8.6, -3.8, 0.75], [6.9, 7.6, 0.7], [-3.2, 8.9, 0.7]],
   lamps: [[-1.7, 4.2], [1.7, 4.2], [-1.7, 8.0], [1.7, 8.0], [-2.3, -0.9], [2.3, -0.9]],
-  bushes: [[3.7, -2.75, 0.8, true], [-2.6, 3.2, 0.8, true], [-8.4, 1.9, 0.7, false], [6.6, 6.3, 0.7, true], [9.0, 2.6, 0.7, false], [-5.0, 7.3, 0.75, true]],
-  beds: [[-2.7, 6.9], [2.7, 6.9]],
+  bushes: [[3.7, -2.75, 0.8, true], [-2.6, 3.2, 0.8, true], [-8.4, 1.9, 0.7, false], [6.6, 6.3, 0.7, true], [9.0, 2.6, 0.7, false],
+    [-2.9, 7.6, 0.7, true], [3.3, 8.7, 0.7, false], [-7.6, -1.3, 0.6, true], [5.0, -8.0, 0.7, false]],
+  beds: [[2.7, 6.9]],
   flag: [-5.6, 2.0],
-  fences: [[[-2.5, 8.5], [-4.4, 7.7]], [[2.5, 8.5], [4.4, 7.7]]],
+  fences: [[[2.5, 8.5], [4.4, 7.7]]],
 };
 // islets, in local coordinates: u = toward the main island (along DOORS.facing), v = to the right of that
 export const ISLET_PROPS = {
-  files: { trees: [[1.0, 4.4, 1.0], [-2.4, 4.3, 0.9], [-4.6, 1.6, 0.9], [1.0, -4.4, 0.95], [-2.4, -4.3, 0.85], [-4.6, -1.6, 1.0]], lamps: [[4.4, 1.4], [4.4, -1.4]], benches: [[3.4, 3.2], [3.4, -3.2]] },
-  mail: { trees: [[-3.4, 1.9, 0.9], [-3.4, -1.9, 0.8], [0.4, -3.6, 0.85]], lamps: [[3.7, -1.3]], bushes: [[1.6, 3.4, 0.8, true], [-1.2, 3.5, 0.7, true], [2.2, -3.2, 0.7, true]], fences: [[[3.4, 1.3], [3.0, 3.1]], [[3.4, -1.3], [3.0, -3.1]]] },
-  github: { trees: [[-3.4, 2.0, 0.9], [-3.4, -2.0, 1.0], [1.4, 3.6, 0.8]], lamps: [[3.7, 1.3], [3.7, -1.3]], rocks: [[2.4, -3.4, 1.2], [0.4, -3.8, 0.9], [-1.8, 3.6, 1.0]] },
-  admin: { trees: [[-3.5, 1.9, 0.9], [-3.5, -1.9, 0.9]], lamps: [[3.8, 1.3], [3.8, -1.3]], bushes: [[2.2, 3.3, 0.7, false], [2.2, -3.3, 0.7, false], [0.4, 3.6, 0.7, false], [0.4, -3.6, 0.7, false]] },
+  files: { trees: [[1.0, 4.4, 1.0], [-2.4, 4.3, 0.9], [-4.6, 1.6, 0.9], [1.0, -4.4, 0.95], [-2.4, -4.3, 0.85], [-4.6, -1.6, 1.0], [-5.4, 0.0, 0.8], [2.8, 4.9, 0.7], [2.8, -4.9, 0.75]],
+    lamps: [[4.4, 1.4], [4.4, -1.4]], benches: [[3.4, 3.2], [3.4, -3.2]], bushes: [[4.8, 2.9, 0.6, true], [4.8, -2.9, 0.6, true], [-0.4, 5.3, 0.6, false], [-0.4, -5.3, 0.6, true]] },
+  mail: { trees: [[-3.4, 1.9, 0.9], [-3.4, -1.9, 0.8], [0.4, -3.6, 0.85], [-1.8, 3.9, 0.7], [-4.3, 0.0, 0.75], [2.4, 4.1, 0.6]], lamps: [[3.7, -1.3]],
+    bushes: [[1.6, 3.4, 0.8, true], [-1.2, 3.5, 0.7, true], [2.2, -3.2, 0.7, true], [-2.6, -3.5, 0.6, false], [4.2, 0.0, 0.5, true], [0.0, -4.5, 0.6, true]], fences: [[[3.4, 1.3], [3.0, 3.1]], [[3.4, -1.3], [3.0, -3.1]]] },
+  github: { trees: [[-3.4, 2.0, 0.9], [-3.4, -2.0, 1.0], [1.4, 3.6, 0.8], [-4.2, 0.0, 0.7], [-1.2, -4.2, 0.75], [2.9, 3.0, 0.6]], lamps: [[3.7, 1.3], [3.7, -1.3]],
+    rocks: [[2.4, -3.4, 1.2], [0.4, -3.8, 0.9], [-1.8, 3.6, 1.0]], bushes: [[-2.2, 3.9, 0.6, true], [3.6, -2.6, 0.6, false], [0.2, 4.4, 0.6, true]] },
+  admin: { trees: [[-3.5, 1.9, 0.9], [-3.5, -1.9, 0.9], [-4.3, 0.0, 0.8], [-1.4, 4.0, 0.7], [-1.4, -4.0, 0.7]], lamps: [[3.8, 1.3], [3.8, -1.3]],
+    bushes: [[2.2, 3.3, 0.7, false], [2.2, -3.3, 0.7, false], [0.4, 3.6, 0.7, false], [0.4, -3.6, 0.7, false], [-2.8, 3.4, 0.6, true], [-2.8, -3.4, 0.6, true]] },
+};
+// the Factory island, relative to its centre (it has no DOORS entry to turn local u/v into world points); kept clear of
+// the hall, the yard, the bay, the cart's lane and every walking edge
+export const FACTORY_PROPS = {
+  trees: [[-3.0, -7.6, 0.8], [-5.6, -6.4, 0.9], [6.6, -5.4, 0.8], [7.6, -2.4, 0.7], [6.0, 2.6, 0.8], [-0.8, 7.8, 0.7], [-4.6, 8.0, 0.6], [7.2, 3.8, 0.6]],
+  bushes: [[-0.2, -7.2, 0.6, true], [6.3, 4.2, 0.6, false], [-1.4, 7.6, 0.6, true], [8.3, 0.0, 0.5, true], [-8.0, 0.6, 0.6, false], [1.2, -8.4, 0.5, true]],
+  lamps: [[5.2, 1.0]],
 };
 export function isletToWorld(L, key, u, v) {
   const isl = L.ISLANDS[key], [fx, fz] = L.DOORS[key].facing;
@@ -516,10 +566,15 @@ function placeProps(ctx, parent, S) {
   PROPS.beds.forEach(([x, z]) => S.flowerBed(parent, x, z));
   S.flagpole(parent, PROPS.flag[0], PROPS.flag[1]);
   PROPS.fences.forEach((pts) => S.fence(parent, pts));
-  const end = L.DOCK.hatch[1] + L.DOCK.pierLength * 0.6;
-  S.crate(parent, 1.55, end - 0.6, 0.6, 0.2); S.crate(parent, 1.5, end - 1.25, 0.45, -0.3); S.barrel(parent, -1.6, end - 0.6);
-  S.lamp(parent, -1.75, end - 1.4);
+  // dock props, in the pier's own frame (u across the pier, w out along it from the hatch)
+  const [ux, uz] = L.DOCK.dir, dockAt = (u, w) => [L.DOCK.hatch[0] - uz * u + ux * w, L.DOCK.hatch[1] + ux * u + uz * w];
+  S.crate(parent, ...dockAt(1.6, 2.1), 0.6, 0.2); S.crate(parent, ...dockAt(1.55, 1.45), 0.45, -0.3); S.barrel(parent, ...dockAt(-1.6, 2.1));
+  S.lamp(parent, ...dockAt(-1.75, 1.0));
   S.barrel(parent, L.BIN.x - 1.15, L.BIN.z - 0.2); S.crate(parent, L.BIN.x - 1.1, L.BIN.z + 0.7, 0.5, 0.4);
+  const fc = (x, z) => [L.ISLANDS.factory.x + x, L.ISLANDS.factory.z + z];
+  FACTORY_PROPS.trees.forEach(([x, z, s]) => S.tree(parent, ...fc(x, z), s));
+  FACTORY_PROPS.bushes.forEach(([x, z, s, f]) => S.bush(parent, ...fc(x, z), s, f));
+  FACTORY_PROPS.lamps.forEach(([x, z]) => S.lamp(parent, ...fc(x, z)));
   for (const [key, list] of Object.entries(ISLET_PROPS)) {
     const at = (u, v) => isletToWorld(L, key, u, v), face = Math.atan2(...L.DOORS[key].facing);
     (list.trees || []).forEach(([u, v, s]) => S.tree(parent, ...at(u, v), s));
@@ -531,11 +586,52 @@ function placeProps(ctx, parent, S) {
   }
 }
 
+// ---------- reeds: little clumps of thin stems just inside every island's edge, skipping the bridge landings ----------
+function buildReeds(ctx, parent) {
+  const { kit, L } = ctx, { box, grp, rr, rnd } = kit;
+  const near = (x, z, pts, r) => pts.some(([px, pz]) => Math.hypot(px - x, pz - z) < r);
+  const keepOut = [];
+  for (const b of Object.values(L.BRIDGES)) keepOut.push(b.from, b.to);
+  keepOut.push(L.DOCK.hatch, dockRoot(L));
+  for (const [key, isl] of Object.entries(L.ISLANDS)) {
+    const n = Math.round(isl.r * 1.6);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * PI * 2 + rr(-0.15, 0.15), r = edgeRadius(isl, a) - 0.75;
+      const x = isl.x + Math.cos(a) * r, z = isl.z + Math.sin(a) * r;
+      if (near(x, z, keepOut, 2.6)) continue;
+      const H = L.FACTORY.hall;
+      if (key === 'factory' && x < H.x0 + 0.6 && z > H.z0 - 0.6 && z < H.z1 + 0.6) continue; // under the hall's west wall
+      const g = grp(parent, 'reeds', x, 0, z, rnd() * PI);
+      for (let k = 0; k < 5; k++) {
+        const h = +rr(0.35, 0.75).toFixed(2);
+        box(g, k % 2 ? 'leaf_d' : 'ivy', 'reed', 0.05, h, 0.05, rr(-0.22, 0.22), 0, rr(-0.22, 0.22));
+        if (k === 0) box(g, 'trunk', 'reed_head', 0.08, 0.16, 0.08, 0, h, 0);
+      }
+    }
+  }
+}
+
+// ---------- gulls: six white birds of three boxes each, circling slowly over the harbour (y 9 to 12) ----------
+// Their circles stay south-west of the gatehouse so they never cross a building label. Not inked (noNormal), like clouds.
+function buildGulls(ctx, parent) {
+  const { kit, stage } = ctx, { box, grp } = kit;
+  const gulls = [];
+  for (let i = 0; i < 6; i++) {
+    const g = grp(parent, 'gull', 0, 0, 0);
+    box(g, 'cloud', 'gull_body', 0.36, 0.26, 0.9, 0, -0.13, 0);
+    box(g, 'ink', 'gull_beak', 0.1, 0.08, 0.16, 0, -0.05, 0.5);
+    const wings = [-1, 1].map((s) => { const w = grp(g, 'gull_wing', s * 0.16, 0, 0); box(w, 'cloud', 'gull_wing', 1.0, 0.06, 0.4, s * 0.5, 0, -0.06); box(w, 'stone_dark', 'gull_wingtip', 0.24, 0.07, 0.4, s * 0.9, 0, -0.06); return w; });
+    if (stage && stage.noNormal) stage.noNormal.add(g);
+    gulls.push({ g, wings, cx: -3.0 + (i % 3) * 1.6, cz: 6.0 + (i % 2) * 2.0, r: 3.2 + (i % 3) * 0.9, y: 9 + (i * 0.6) % 3, w: (i % 2 ? -1 : 1) * (0.22 + i * 0.025), ph: i * 1.1 });
+  }
+  return gulls;
+}
+
 // ---------- clouds: six drift below the islands, three far behind them; never inked by the outline pass ----------
 function buildClouds(ctx, parent) {
   const { kit, stage } = ctx, { box, grp, rr } = kit;
   const spots = [[-30, -10.5, -14], [-6, -11.5, 6], [18, -10, -6], [34, -12, 10], [-20, -12, 16], [8, -11, -26],
-    [-26, 8.5, -40], [4, 10, -44], [30, 7.5, -38]];
+    [-26, 8.5, -40], [4, 10, -44], [30, 7.5, -38], [-40, 11, -24], [18, 12, -50]];
   return spots.map(([x, y, z], i) => {
     const g = grp(parent, 'cloud', x, y, z);
     const n = 3 + (i % 3);
@@ -558,11 +654,21 @@ export function buildWorld(ctx) {
   const pen = buildPen(ctx, world);
   const bin = buildBin(ctx, world);
   placeProps(ctx, world, makeScenery(ctx));
+  buildReeds(ctx, world);
   const clouds = buildClouds(ctx, world);
+  const gulls = buildGulls(ctx, world);
   world.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   for (const c of clouds) c.mesh.traverse((o) => { o.castShadow = false; o.receiveShadow = false; });
+  for (const gl of gulls) gl.g.traverse((o) => { o.castShadow = false; o.receiveShadow = false; });
   function tick(t, dt) {
     for (const c of clouds) { c.mesh.position.x += c.speed * dt; if (c.mesh.position.x > c.x1) c.mesh.position.x = c.x0; }
+    for (const gl of gulls) {
+      const a = gl.ph + t * gl.w;
+      gl.g.position.set(gl.cx + Math.cos(a) * gl.r, gl.y + Math.sin(t * 0.7 + gl.ph) * 0.3, gl.cz + Math.sin(a) * gl.r);
+      gl.g.rotation.y = -a + (gl.w > 0 ? 0 : PI);           // fly along the circle
+      const flap = Math.sin(t * 5 + gl.ph * 3) * 0.45;
+      gl.wings[0].rotation.z = flap; gl.wings[1].rotation.z = -flap;
+    }
   }
   return {
     world, gates, pen, bin, dock: { hatch: dock.hatch }, clouds, tick,

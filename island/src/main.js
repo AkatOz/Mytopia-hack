@@ -6,10 +6,17 @@
 // allowed to finish before the next row), the speech bubbles are gone, the gateway strip, and a new chain (someone pressed RESET elsewhere) resets the picture.
 // Round two (docs/ISLAND_V2_ADDITIONS.md): the tool chips POST per-tool revoke/restore, the ID card, ledger rows open
 // their raw JSON, and A opens the architecture sheet (src/arch.js).
+// Build 3 (docs/BUILD3.md section 6): GET /tiers; the Factory's POSTs (mint, tier, retire; a chip's grant uses the
+// restore route); a mint from this browser irises into the Factory floor for the production line; the new effects
+// (built, inquest, removeRobot, setTier, factorySmoke); a click on a building enters its room; keys H, F, ?; the
+// agent sheet replaces the robot click's raw JSON; the chain check runs here (ledger.js verifyChain) for the strip
+// and the inquest. Scene calls that builder B1 adds tonight are guarded (scene.x?.()) so the page runs on either scene.
 import { createScene } from './scene.js';
-import { createHud } from './hud.js';
+import { createHud, normTiers, rowSummary } from './hud.js';
 import { ARCH_SHEET } from './arch.js';
-import { apply, initialState, withRoster, fresh, gatewayStats, DEFAULT_ROSTER } from './reducer.js';
+import { verifyChain } from './ledger.js';
+import { TIERS } from './tiers.js';
+import { apply, initialState, withRoster, fresh, gatewayStats, inquestOf, DEFAULT_ROSTER } from './reducer.js';
 
 const cfg = Object.assign({ api: '', adminToken: '', pollMs: 1000, staleAfterMs: 3000 }, window.MYTOPIA || {});
 const params = new URLSearchParams(location.search);
@@ -23,16 +30,36 @@ if (source === 'replay') { $('mode').className = 'hud paper REPLAY'; $('mode').i
 
 let roster = DEFAULT_ROSTER;
 let state = initialState(roster);
+let tiers = TIERS;
 let lastGoodPoll = null, uiSel = null, recordedOn = '', chainId = '', gwMode = '';
-// action -> truthy while "sent...": the four buttons hold true; a tool chip holds 'tool:<name>' -> the agent id it acts on
+let chain = { verified: null, brokenAt: null, n: -1 }; // the browser's own hash-chain check (verified null: nothing real to check)
+// action -> truthy while "sent...": the four buttons hold true; a tool chip holds 'tool:<name>' -> the agent id it acts on;
+// 'tier' -> the agent id; 'retire:<id>' -> true
 const pendingBtn = {};
 const scene = await createScene(document.querySelector('three-d-stage'));
-const hud = createHud(scene, { source, staleAfterMs: cfg.staleAfterMs, lastGoodPoll: () => lastGoodPoll, recordedOn: () => recordedOn, getState: () => state, selected: () => selected() });
+// build 3 scene (B1): robots can leave, the Factory exists. On the scene of this afternoon the new script steps are
+// mapped to old ones so the story still reads (build -> spawn, recycle -> sink, cart -> nothing).
+const hasFactory = typeof scene.removeRobot === 'function';
+const hud = createHud(scene, {
+  source, staleAfterMs: cfg.staleAfterMs, lastGoodPoll: () => lastGoodPoll, recordedOn: () => recordedOn, getState: () => state,
+  selected: () => selected(), inRoom: () => !!curRoom(), tiers: () => tiers, rawInquest: (id, report) => rawInquest(id, report), mint: (spec) => mint(spec),
+});
 
 // one robot per agent in the roster (an unknown client gets no robot: its refusals are drawn at the gatehouse)
+const added = new Set(), slots = {}, mintColor = {};
+let nextSlot = 0;
 function ensureRobots() {
-  let slot = 0;
-  for (const a of Object.values(state.agents)) if (a.known) scene.addRobot(a.id, a.color, slot++);
+  for (const a of Object.values(state.agents)) {
+    if (!a.known || added.has(a.id)) continue;
+    if (!(a.id in slots)) slots[a.id] = nextSlot++;
+    scene.addRobot(a.id, mintColor[a.id] || a.color, slots[a.id]);
+    scene.setTier?.(a.id, a.tier);
+    added.add(a.id);
+  }
+}
+// after a new chain: robots whose agent is no longer on the roster (Factory agents retired by RESET) leave
+function pruneRobots() {
+  for (const id of [...added]) if (!state.agents[id] || !state.agents[id].known) { scene.removeRobot?.(id); added.delete(id); }
 }
 ensureRobots();
 
@@ -42,11 +69,12 @@ ensureRobots();
 // play at a time, the rest wait.
 // quiet = true: catching up on a backlog, only the state lands (plates, counters, packets, smoke), nothing animates.
 // quiet = 'skipped': a robot skipped a script to keep up with the log: the state lands and stamps and lamps still show.
+const OLD_STEP = (st) => (st.build ? { spawn: true } : st.recycle ? { sink: true } : st.cart ? null : st);
 const MAX_AT_ONCE = 3, queue = []; let playing = 0;
 function play(f, quiet = false) {
   const backlog = quiet === true;
   switch (f.kind) {
-    case 'script': scene.run(f.agent, f.steps, { instant: backlog }); break;
+    case 'script': scene.run(f.agent, hasFactory ? f.steps : f.steps.map(OLD_STEP).filter(Boolean), { instant: backlog }); break;
     case 'plate': scene.setPlate(f.agent, f.plate); break;
     case 'halt': scene.halt(f.agent); break;
     case 'freeze': scene.freeze(f.agent); break;
@@ -60,6 +88,12 @@ function play(f, quiet = false) {
     case 'slip': if (!quiet) scene.slip(f.from, f.ok); break;
     case 'banner': if (!quiet) { queue.push(f); pump(); } break;
     case 'stampAt': if (!backlog) { queue.push(f); pump(); } break;
+    // build 3
+    case 'setTier': scene.setTier?.(f.agent, f.tier); break;
+    case 'factorySmoke': if (!backlog) scene.factorySmoke?.(true); break;
+    case 'built': scene.roomsRefresh?.(); break; // the exterior script plays on its own; this browser's own mint also irises into the floor (mint())
+    case 'removeRobot': scene.removeRobot?.(f.agent); added.delete(f.agent); break;
+    case 'inquest': hud.showInquest(f.agent, inquestOf(state, f.agent, chain.verified)); break;
   }
 }
 function timed(f) {
@@ -73,6 +107,7 @@ scene.onFx((f, quiet) => play(f, quiet));
 scene.onIdCard((id, card) => hud.idCard(card.at, card.lines, state.agents[id]?.color));
 
 // ---------- apply events (one code path for live and replay) ----------
+const ADMIN = ['revoked', 'restored', 'kill_requested', 'run_started', 'created', 'tier_changed', 'retired'];
 function ingest(events) {
   events.forEach((ev, i) => {
     const r = apply(state, ev);
@@ -80,26 +115,46 @@ function ingest(events) {
     ensureRobots();
     const quiet = events.length > 4 && i < events.length - 2; // catching up on a backlog: no fireworks for old rows
     for (const f of r.effects) play(f, quiet);
-    if (['revoked', 'restored', 'kill_requested', 'run_started'].includes(ev.decision) && source === 'live') loadAgents();
+    if (ADMIN.includes(ev.decision) && source === 'live') loadAgents(); // the roster follows every badge change
     if (ev.decision === 'run_started') uiSel = null;
   });
-  if (events.length) { scene.drawLedger(state.log, source, chainId); strip(); hud.renderBadge(); } // the badge names the agent_mode
+  if (events.length) { scene.drawLedger?.(state.log, source, chainId); scene.roomsRefresh?.(); strip(); checkChain(); hud.renderBadge(); } // the badge names the agent_mode
   render();
 }
 
 // ---------- HUD ----------
-const selected = () => uiSel || state.selected;
-function render() { hud.render(state, { selected: selected(), pending: pendingBtn, source }); }
-function strip() { hud.setGatewayStrip({ ...gatewayStats(state.log), chain: scene.panels.verified() }); }
-scene.onChain(strip);
+const selected = () => (uiSel && state.agents[uiSel]?.known ? uiSel : state.selected);
+let scanning = null;
+function render() {
+  hud.render(state, { selected: selected(), pending: pendingBtn, source });
+  // the bay's scanner arm sweeps while an inquest panel is open (B1: scene.bayScanning)
+  const open = hud.inquestOpen(); if (open !== scanning) { scanning = open; scene.bayScanning?.(!!open); }
+}
+const chainWord = () => (chain.verified === true ? 'ok' : chain.verified === false ? `broken #${chain.brokenAt}` : 'unverified');
+function strip() { hud.setGatewayStrip({ ...gatewayStats(state.log), chain: chainWord() }); }
+// the hash chain, checked here in the browser (the same check the ledger room shows) whenever the log grows
+async function checkChain() {
+  const n = state.log.length; if (n === chain.n) return;
+  chain.n = n;
+  try {
+    const r = await verifyChain(state.log.slice());
+    if (n !== state.log.length) return;
+    chain = { verified: r.verified ? r.ok : null, brokenAt: r.brokenAt, n }; strip();
+    const open = hud.inquestOpen(); if (open) hud.refreshInquest(inquestOf(state, open, chain.verified)); // the panel's "rows hash-verified" line
+  } catch {}
+}
 setInterval(hud.renderBadge, 1000); hud.renderBadge();
-// the overlay (name tags, stamps, labels, bin count) and the ledger panels follow the 3D scene every frame
-function frame() { hud.follow(); scene.panels.follow(); requestAnimationFrame(frame); }
+// the overlay (name tags, stamps, labels, bin count, the inquest) and the ledger panels follow the 3D scene every frame
+function frame() { hud.follow(); scene.panels?.follow?.(); requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
 
 // ---------- live: poll the gateway ----------
 async function loadAgents() {
-  try { const r = await fetch(`${cfg.api}/agents`, { cache: 'no-store' }); if (r.ok) { roster = await r.json(); state = withRoster(state, roster); ensureRobots(); render(); } } catch {}
+  try { const r = await fetch(`${cfg.api}/agents`, { cache: 'no-store' }); if (r.ok) { roster = await r.json(); state = withRoster(state, roster); ensureRobots(); render(); scene.roomsRefresh?.(); } } catch {}
+}
+// the tier table (GET /tiers); tiers.js until it answers, and in replay when no gateway serves the page
+async function loadTiers() {
+  try { const r = await fetch(`${cfg.api}/tiers`, { cache: 'no-store' }); if (r.ok) { tiers = normTiers(await r.json()); render(); } } catch {}
 }
 // local or aws: only an aws gateway keeps the durable copy in DynamoDB (the ledger row sheet says which)
 async function loadMode() {
@@ -111,9 +166,11 @@ function newChain(id) {
   const changed = chainId && id !== chainId;
   chainId = id;
   if (!changed) return false;
-  state = withRoster(initialState(roster), roster); uiSel = null;
+  // RESET retired every Factory agent: start from the two seed badges, then ask the gateway for the roster again
+  state = withRoster(initialState(DEFAULT_ROSTER), roster.filter((r) => r.made_by !== 'factory')); uiSel = null;
   for (const k of Object.keys(pendingBtn)) delete pendingBtn[k];
-  scene.reset(); scene.drawLedger(state.log, source, chainId); strip(); render();
+  scene.reset(); pruneRobots(); hud.closeInquest(); chain = { verified: null, brokenAt: null, n: -1 };
+  scene.drawLedger?.(state.log, source, chainId); scene.roomsRefresh?.(); strip(); render(); loadAgents();
   return true;
 }
 async function poll() {
@@ -151,6 +208,23 @@ async function replay(path) {
 }
 
 // ---------- the buttons: POST and wait for the event ----------
+const admin = (extra = {}) => ({ 'X-Admin-Token': cfg.adminToken || '', ...extra });
+// the gateway's own sentence for a refusal: {"error": ...} (the 403 above the ceiling), or FastAPI's {"detail": ...}
+function errText(res, body) {
+  if (!res) return 'no answer from the gateway';
+  const d = body && (body.error || (body.detail && (body.detail.error || (typeof body.detail === 'string' ? body.detail : Array.isArray(body.detail) && body.detail[0]?.msg))));
+  return d || `HTTP ${res.status}`;
+}
+async function post(url, json) {
+  let res = null, body = null;
+  try {
+    res = await fetch(url, { method: 'POST', headers: admin(json ? { 'Content-Type': 'application/json' } : {}), body: json ? JSON.stringify(json) : undefined });
+    body = await res.json().catch(() => null);
+  } catch {}
+  return { res, body, ok: !!(res && res.ok) };
+}
+function refused(text) { state = { ...state, ticker: text }; hud.banner(text, 'bad'); render(); }
+
 // Save replay: every event seen, as a file the island can play back with ?replay=<file>
 function saveReplay() {
   const blob = new Blob([JSON.stringify({ chain: chainId || undefined, events: state.log }, null, 1)], { type: 'application/json' });
@@ -164,84 +238,206 @@ async function press(act) {
   const id = selected();
   const url = act === 'reset' ? `${cfg.api}/demo/reset` : `${cfg.api}/agents/${encodeURIComponent(id)}/${act}`;
   pendingBtn[act] = true; render();
-  let res = null;
-  try { res = await fetch(url, { method: 'POST', headers: { 'X-Admin-Token': cfg.adminToken || '' } }); } catch {}
+  const { res, body, ok } = await post(url);
   if (act === 'reset') { location.reload(); return; }
-  if (!res || !res.ok) {
-    delete pendingBtn[act];
-    state = { ...state, ticker: `${act.toUpperCase()} refused: ${res ? 'HTTP ' + res.status : 'no answer from the gateway'}` };
-    render();
-  } // on 2xx the label stays "sent..." until the matching event (revoked / restored / kill_requested) arrives
+  if (!ok) { delete pendingBtn[act]; refused(`${act.toUpperCase()} refused: ${errText(res, body)}`); }
+  // on 2xx the label stays "sent..." until the matching event (revoked / restored / kill_requested) arrives
 }
-$('ops').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (b) press(b.dataset.act); });
+function ui(what) {
+  if (what === 'factory') toggleSheet('office');
+  else if (what === 'help') toggleSheet('help');
+  else if (what === 'hide') naked(true);
+}
+$('ops').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.act) press(b.dataset.act); else if (b.dataset.ui) ui(b.dataset.ui);
+});
 $('tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-agent]'); if (b) { uiSel = b.dataset.agent; render(); hud.renderBadge(); } });
 
-// The tool chips (round two, section 1): an allowed chip asks for the per-tool revoke, a pulled one for the restore.
-// The chip shows "sent..." until the gateway's revoked/restored event for that tool comes back (ack 'tool:<name>').
-// The gateway answers changed:false (and logs nothing) when the badge already says so: then no event will come.
-async function pressTool(tool, act) {
+// The tool chips: an allowed chip asks for the per-tool revoke; a paper (grant) or pulled one for the restore, which
+// now also grants a tool that was never on the badge. A padlocked chip asks too: the gateway answers 403 with its
+// sentence ("delete_file is above the Gold ceiling"), shown as a banner while the chip shakes. A chip shows "sent..."
+// until the gateway's revoked/restored event for that tool comes back (ack 'tool:<name>'); changed:false logs nothing.
+async function pressTool(tool, act, locked) {
   const key = 'tool:' + tool, id = selected();
   if (source === 'replay' || pendingBtn[key]) return;
-  pendingBtn[key] = id; render();
-  let res = null, body = null;
-  try {
-    res = await fetch(`${cfg.api}/agents/${encodeURIComponent(id)}/tools/${encodeURIComponent(tool)}/${act}`, { method: 'POST', headers: { 'X-Admin-Token': cfg.adminToken || '' } });
-    body = await res.json().catch(() => null);
-  } catch {}
-  if (res && res.ok && !(body && body.changed === false)) return; // wait for the event
+  if (!locked) { pendingBtn[key] = id; render(); }
+  const { res, body, ok } = await post(`${cfg.api}/agents/${encodeURIComponent(id)}/tools/${encodeURIComponent(tool)}/${act}`);
+  if (ok && !(body && body.changed === false)) return; // wait for the event
   delete pendingBtn[key];
-  const why = res && res.ok ? (body && body.note) || 'nothing changed' : `refused: ${res ? 'HTTP ' + res.status : 'no answer from the gateway'}`;
-  state = { ...state, ticker: `${act.toUpperCase()} ${tool}: ${why}` };
+  if (!ok) { hud.shakeChip(tool); refused(locked || (res && res.status === 403) ? errText(res, body) : `${act.toUpperCase()} ${tool} refused: ${errText(res, body)}`); return; }
+  state = { ...state, ticker: `${act.toUpperCase()} ${tool}: ${(body && body.note) || 'nothing changed'}` };
   render();
 }
-$('c-chips').addEventListener('click', (e) => { const b = e.target.closest('button[data-tool]'); if (b && b.dataset.act) pressTool(b.dataset.tool, b.dataset.act); });
+// PROMOTE / DEMOTE: POST /agents/{id}/tier {tier}; the medal changes when the tier_changed event arrives
+async function pressTier(to) {
+  const id = selected();
+  if (source === 'replay' || pendingBtn.tier || !to) return;
+  pendingBtn.tier = id; render();
+  const { res, body, ok } = await post(`${cfg.api}/agents/${encodeURIComponent(id)}/tier`, { tier: to });
+  if (ok && !(body && body.changed === false)) return;
+  delete pendingBtn.tier;
+  if (!ok) refused(`tier change refused: ${errText(res, body)}`); else render();
+}
+// RETIRE (Factory office): factory-made agents only; the gateway deletes the client and the row, then logs retired
+async function pressRetire(id) {
+  const key = 'retire:' + id;
+  if (source === 'replay' || pendingBtn[key]) return;
+  pendingBtn[key] = true; render();
+  const { res, body, ok } = await post(`${cfg.api}/agents/${encodeURIComponent(id)}/retire`);
+  if (!ok) { delete pendingBtn[key]; refused(`RETIRE refused: ${errText(res, body)}`); }
+}
+// the card, the agent sheet and the office share one click handler: chips, tier arrows, the three buttons, RETIRE
+function onPanelClick(e) {
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  if (b.dataset.tool) pressTool(b.dataset.tool, b.dataset.act, !!b.dataset.locked);
+  else if ('tier' in b.dataset) pressTier(b.dataset.tier);
+  else if (b.dataset.retire) pressRetire(b.dataset.retire);
+  else if (b.dataset.act && e.currentTarget.id === 'agent') press(b.dataset.act);
+}
+for (const id of ['card', 'agent', 'office']) $(id).addEventListener('click', onPanelClick);
 
-// ---------- the gatehouse ledger room, entered through an iris wipe ----------
+// NEW AGENT: POST /agents. On 201 from this browser the sheet closes, the island irises into the Factory floor where
+// the line builds the robot (scene.buildRobot), then irises back; the created event's exterior script (the robot
+// rolls from the Factory door to the yard) plays meanwhile or after, so the robot ends in the yard either way.
+async function mint(spec) {
+  if (source === 'replay') return { ok: false, error: 'This is a recording: the Factory is read-only.' };
+  const { res, body, ok } = await post(`${cfg.api}/agents`, spec);
+  if (!ok) return { ok: false, error: errText(res, body) };
+  mintColor[spec.agent] = spec.color;
+  loadAgents();
+  openSheet(null);
+  buildFlow({ id: spec.agent, name: spec.name, color: spec.color, tier: spec.tier, tools: spec.tools });
+  return { ok: true };
+}
+async function buildFlow(spec) {
+  if (typeof scene.buildRobot !== 'function' || typeof scene.enterRoom !== 'function') return;
+  await enterRoom('factory_floor');
+  try { await Promise.race([scene.buildRobot(spec), sleep(12000)]); } catch (e) { console.warn('buildRobot', e); }
+  if (curRoom() === 'factory_floor') await leaveRoom();
+}
+
+// ---------- rooms: every building has an interior (rooms.js, builder B2), entered through an iris wipe ----------
+const ROOM_WORDS = {
+  gatehouse: ['GATEHOUSE', '· the ledger and the hash chain: every call, in order'],
+  files: ['FILES TOWER', '· read and search the company drive'],
+  github: ['GITHUB STUDIO', '· file tickets and list them'],
+  mail: ['MAIL COTTAGE', '· send email for the company'],
+  admin: ['ADMIN COURTHOUSE', '· delete files: Diamond badges only'],
+  factory_office: ['FACTORY OFFICE', '· badges are made, ranked and retired here'],
+  factory_floor: ['FACTORY FLOOR', '· the production line that builds robots'],
+};
+// the room on screen: the build 3 scene names it; this afternoon's scene only had the gatehouse
+const curRoom = () => (typeof scene.roomKey === 'function' ? scene.roomKey() : scene.inRoom() ? 'gatehouse' : null) || null;
 let irisBusy = false;
-async function room(on) {
-  if (irisBusy || scene.inRoom() === on) return;
+async function iris(change) {
   irisBusy = true; $('iris').classList.add('shut'); await sleep(380);
-  scene.setRoom(on); document.body.classList.toggle('room', on); scene.drawLedger(state.log, source, chainId);
+  try { change(); } catch (e) { console.warn('room change', e); }
   $('iris').classList.remove('shut'); await sleep(380); irisBusy = false;
 }
-$('back').addEventListener('click', () => room(false));
+function titleRoom(key) {
+  const [name, sub] = ROOM_WORDS[key] || [String(key).toUpperCase(), ''];
+  $('r-name').textContent = name; $('r-sub').textContent = sub;
+  $('r-tamper').style.display = key === 'gatehouse' ? '' : 'none';
+  $('r-office').style.display = key === 'factory_office' ? '' : 'none';
+}
+async function enterRoom(key) {
+  if (irisBusy || !key || curRoom() === key) return;
+  if (typeof scene.enterRoom !== 'function' && key !== 'gatehouse') return; // no interiors on this scene yet
+  await iris(() => {
+    if (typeof scene.enterRoom === 'function') scene.enterRoom(key); else scene.setRoom(true);
+    titleRoom(key); document.body.classList.add('room');
+    scene.drawLedger?.(state.log, source, chainId); scene.roomsRefresh?.();
+  });
+  if (key === 'factory_office') openSheet('office');
+}
+async function leaveRoom() {
+  if (irisBusy || !curRoom()) return;
+  await iris(() => {
+    if (typeof scene.leaveRoom === 'function') scene.leaveRoom(); else scene.setRoom(false);
+    document.body.classList.remove('room'); hud.relayout();
+  });
+}
+$('back').addEventListener('click', () => leaveRoom());
+$('r-tamper').addEventListener('click', () => scene.tamperTest?.());
+$('r-office').addEventListener('click', () => toggleSheet('office'));
 
-// ---------- the sheets: T table, the raw JSON of one row, A architecture (one open at a time) ----------
-const SHEETS = ['table', 'json', 'arch'];
-function openSheet(id) { for (const s of SHEETS) $(s).classList.toggle('on', s === id); }
-function showJson(title, ev, foot = '') {
+// ---------- the sheets: T table, one row's raw JSON, A architecture, the agent, the Factory office, the help ----------
+const SHEETS = ['table', 'json', 'arch', 'agent', 'office', 'help'];
+function openSheet(id) {
+  for (const s of SHEETS) $(s).classList.toggle('on', s === id);
+  if (id === 'office') hud.openOffice();
+  render();
+}
+function toggleSheet(id) { openSheet($(id).classList.contains('on') ? null : id); }
+function showJson(title, ev, foot = '', summary = '') {
   $('j-title').textContent = title;
+  $('j-sum').textContent = summary;
   $('j-body').textContent = ev ? JSON.stringify(ev, null, 2) : 'no event yet';
   $('j-foot').textContent = foot;
   openSheet('json');
 }
-// A ledger row opens the row exactly as the gateway stored it, and says where its durable copy lives
-scene.onLedgerRow((seq) => {
+// A ledger row opens the row exactly as the gateway stored it, with one plain sentence above it and where its durable copy lives
+function onRow(seq) {
   const ev = state.log.find((x) => x.seq === seq); if (!ev) return;
   const where = source === 'replay' ? (chainId ? `recorded chain ${chainId}, seq ${ev.seq}` : 'a recording without a chain id')
     : gwMode === 'local' ? `local mode: the row sits in the gateway's memory log and JSONL file, chain ${chainId || '—'}, seq ${ev.seq}`
       : `the same row sits in DynamoDB mytopia_events, pk ${chainId || '—'}, seq ${ev.seq}`;
-  showJson(`#${ev.seq} · ${ev.decision} ${ev.tool} · the row as the gateway stored it`, ev, where);
-});
+  showJson(`#${ev.seq} · ${ev.decision} ${ev.tool} · the row as the gateway stored it`, ev, where, rowSummary(ev, state));
+}
+scene.onLedgerRow?.(onRow);
+// the rooms read the island's state through these (B2: createRooms(ctx, hooks))
+const rosterRows = () => Object.values(state.agents).filter((a) => a.known).map((a) => ({
+  agent: a.id, id: a.id, name: a.name, tier: a.tier, ceiling: a.ceiling, role: a.role, made_by: a.madeBy, madeBy: a.madeBy, color: a.color,
+  status: a.plate === 'revoked' ? 'REVOKED' : a.plate === 'stopped' || a.plate === 'kill' ? 'KILLED' : 'ACTIVE', plate: a.plate, at: a.at,
+  allowed_tools: a.allowedTools.slice(), allowedTools: a.allowedTools.slice(), client_id: a.clientId,
+}));
+scene.setRoomHooks?.({ getLog: () => state.log, getRoster: rosterRows, getInquest: (id) => inquestOf(state, id, chain.verified), onRow, getChain: () => chainId });
+// the inquest's raw report: live, the gateway's own GET /agents/{id}/inquest; in replay, the island's computed copy
+async function rawInquest(id, report) {
+  if (source === 'live') {
+    try {
+      const r = await fetch(`${cfg.api}/agents/${encodeURIComponent(id)}/inquest`, { cache: 'no-store', headers: admin() });
+      if (r.ok) { showJson(`Inquest · ${id} · from the gateway`, await r.json(), `GET /agents/${id}/inquest, computed from the chain in the gateway's memory`); return; }
+    } catch {}
+  }
+  showJson(`Inquest · ${id} · computed in this browser`, report, source === 'replay' ? 'replay: computed from the recording by inquestOf() (the gateway computes the same from its chain)' : 'the gateway did not answer GET /agents/{id}/inquest: computed in this browser from the same rows');
+}
 
-// ---------- keyboard and robot click ----------
+// ---------- hide panels (H) ----------
+function naked(on) { document.body.classList.toggle('naked', on); hud.relayout(); }
+$('pill').addEventListener('click', () => naked(false));
+
+// ---------- keyboard, robot and building clicks ----------
 addEventListener('keydown', (e) => {
-  if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
-  if (e.key === 't' || e.key === 'T') { openSheet($('table').classList.contains('on') ? null : 'table'); hud.renderTable(state); }
-  else if (e.key === 'a' || e.key === 'A') { if (!$('arch').innerHTML) $('arch').innerHTML = ARCH_SHEET; openSheet($('arch').classList.contains('on') ? null : 'arch'); }
-  else if (e.key === 'r' || e.key === 'R') { const p = replayPath || 'fixture.json'; location.search = `?replay=${encodeURIComponent(p)}`; }
-  else if (e.key === 'g' || e.key === 'G') room(!scene.inRoom());
-  else if (e.key === 'Escape') { const open = SHEETS.some((s) => $(s).classList.contains('on')); openSheet(null); if (!open) room(false); }
+  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key;
+  if (k === 't' || k === 'T') { toggleSheet('table'); hud.renderTable(state); }
+  else if (k === 'a' || k === 'A') { if (!$('arch').innerHTML) $('arch').innerHTML = ARCH_SHEET; toggleSheet('arch'); }
+  else if (k === 'r' || k === 'R') { const p = replayPath || 'fixture.json'; location.search = `?replay=${encodeURIComponent(p)}`; }
+  else if (k === 'g' || k === 'G') { if (curRoom()) leaveRoom(); else enterRoom('gatehouse'); }
+  else if (k === 'h' || k === 'H') naked(!document.body.classList.contains('naked'));
+  else if (k === 'f' || k === 'F') toggleSheet('office');
+  else if (k === '?' || (k === '/' && e.shiftKey)) toggleSheet('help');
+  else if (k === 'Escape') {
+    const open = SHEETS.some((s) => $(s).classList.contains('on'));
+    if (open) openSheet(null); else if (document.body.classList.contains('naked')) naked(false); else leaveRoom();
+  }
 });
-document.querySelector('three-d-stage').addEventListener('click', (e) => {
-  if (scene.inRoom()) return;
+// a click (not the end of a drag that turned the camera): a robot first, then a building
+const stage = document.querySelector('three-d-stage');
+let down = null;
+stage.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+stage.addEventListener('click', (e) => {
+  if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) return;
+  if (curRoom()) return; // inside a room, the room's own boards take the clicks (rooms.js)
   const id = scene.pickRobot(e.clientX, e.clientY);
-  if (!id) { if (scene.nearGate(e.clientX, e.clientY)) room(true); return; }
-  uiSel = id; render(); hud.renderBadge();
-  const ev = [...state.log].reverse().find((x) => x.agent === id);
-  showJson(`${state.agents[id]?.name || id}: latest event`, ev);
+  if (id && state.agents[id]?.known) { uiSel = id; hud.openAgentSheet(id); openSheet('agent'); hud.renderBadge(); return; }
+  const key = typeof scene.pickBuilding === 'function' ? scene.pickBuilding(e.clientX, e.clientY) : scene.nearGate(e.clientX, e.clientY) ? 'gatehouse' : null;
+  if (key) enterRoom(key);
 });
 
 render(); strip();
-if (source === 'replay') replay(replayPath);
-else { loadAgents(); loadMode(); poll(); }
+if (source === 'replay') replay(replayPath); // replay keeps tiers.js: the same table, and no gateway to ask
+else { loadTiers(); loadAgents(); loadMode(); poll(); }

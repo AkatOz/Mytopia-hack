@@ -4,6 +4,7 @@
 // and courthouse shapes (here at scale 1.15). New today: the FILES skyscraper with its pixel-letter blade sign, the
 // two-storey gatehouse (authentication window, GATEWAY sign, clock at 9:15, ledger tube, pennant), the chief's booth
 // and the door lamps. buildBuildings(ctx, world) returns PLACES: the points and materials the actors and effects use.
+// Build 3: a weather vane on the gatehouse ridge (PLACES.gatehouse.vane). The Factory's buildings are in factory.js.
 import { buildBooth, pixelSign, signBoard, CHIEF_BOOTH } from './world.js';
 
 const PI = Math.PI;
@@ -250,7 +251,14 @@ function gatehouse(ctx, g, R) {
   box(g, 'robot_orange', 'pennant', 0.7, 0.4, 0.04, -2.6, ridge + 1.1, 0);
   box(g, 'robot_orange', 'pennant', 0.36, 0.24, 0.04, -2.07, ridge + 1.18, 0);
   box(g, 'robot_orange', 'pennant', 0.2, 0.1, 0.04, -1.8, ridge + 1.25, 0);
-  return { lampMat, roofY: ridge, ledgerDrop: new THREE.Vector3(1.9, ridge + 0.75, 0), windowY: P + 1.4, signY: P + 2.85 };
+  // build 3: a weather vane on the ridge (iron post, N-S-E-W arms, a turning arrow with a mustard tail); scene.js turns it
+  const vg = grp(g, 'weather_vane', -0.7, ridge - 0.1, 0);
+  cyl(vg, 'iron', 'vane_post', 0.04, 0.05, 1.4, 0, 0, 0, 6);
+  box(vg, 'iron', 'vane_cross', 0.9, 0.04, 0.04, 0, 0.85, 0); box(vg, 'iron', 'vane_cross', 0.04, 0.04, 0.9, 0, 0.85, 0);
+  const vane = grp(vg, 'vane_arrow', 0, 1.25, 0);
+  box(vane, 'iron', 'vane_shaft', 1.1, 0.05, 0.05, 0, 0, 0); box(vane, 'iron', 'vane_head', 0.18, 0.16, 0.05, 0.6, -0.08, 0);
+  box(vane, 'mustard', 'vane_tail', 0.28, 0.26, 0.04, -0.5, -0.12, 0);
+  return { lampMat, roofY: ridge, ledgerDrop: new THREE.Vector3(1.9, ridge + 0.75, 0), windowY: P + 1.4, signY: P + 2.85, vane };
 }
 
 // a 32 x 32 pixel clock face, hands fixed at 9:15
@@ -298,6 +306,7 @@ export function buildBuildings(ctx, world) {
       chiefBooth: { lampMat: chief.lampMat, guardHome: chief.guardHome },
       stampAnchor: V(GH.x, built.signY + 0.6, front + 0.3),
       ledgerDrop: g.localToWorld(built.ledgerDrop),
+      vane: built.vane,
     });
   }
   const shadows = (o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } };

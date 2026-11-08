@@ -66,14 +66,33 @@ def test_lambda_zip_holds_handler_at_root(tmp_path: Path) -> None:
 
 
 def test_gateway_policy_is_narrow() -> None:
-    policy = prov.gateway_policy("123456789012")
+    policy = prov.gateway_policy("123456789012", "us-east-1_AbC")
     actions = sorted(a for s in policy["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"]))
-    assert actions == ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem",
-                       "lambda:InvokeFunction"]
+    assert actions == ["cognito-idp:CreateUserPoolClient", "cognito-idp:DeleteUserPoolClient",
+                       "dynamodb:DeleteItem", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:PutItem",
+                       "dynamodb:Query", "dynamodb:Scan", "dynamodb:UpdateItem", "lambda:InvokeFunction"]
     resources = [s["Resource"] for s in policy["Statement"]]
     assert "arn:aws:dynamodb:us-east-1:123456789012:table/mytopia_agents" in resources
     assert "arn:aws:lambda:us-east-1:123456789012:function:mytopia-tools" in resources
+    assert "arn:aws:cognito-idp:us-east-1:123456789012:userpool/us-east-1_AbC" in resources
     assert all("*" not in r for r in resources)
+    agents = next(s for s in policy["Statement"] if s["Resource"].endswith("table/mytopia_agents"))
+    assert sorted(agents["Action"]) == ["dynamodb:DeleteItem", "dynamodb:GetItem", "dynamodb:PutItem",
+                                        "dynamodb:Scan", "dynamodb:UpdateItem"]  # the Factory's three, on agents only
+
+
+def test_role_policy_dry_run_prints_the_same_policy_without_aws() -> None:
+    r = subprocess.run([sys.executable, str(ROOT / "infra" / "role_policy.py"), "--dry-run", "--pool", "us-east-1_AbC",
+                        "--account", "123456789012"], capture_output=True, text=True, env=offline_env(), timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert "DRY RUN" in r.stdout and "mytopia-gateway-role" in r.stdout and "mytopia-gateway-narrow" in r.stdout
+    printed = json.loads(r.stdout[r.stdout.index("{"):])
+    assert printed == prov.gateway_policy("123456789012", "us-east-1_AbC")
+    missing = subprocess.run([sys.executable, str(ROOT / "infra" / "role_policy.py"), "--dry-run", "--pool", ""],
+                             capture_output=True, text=True, env=offline_env(), timeout=60)
+    assert missing.returncode in (0, 2)  # 2 when gateway/.env names no pool either; never an AWS call
+    source = (ROOT / "infra" / "role_policy.py").read_text(encoding="utf-8")
+    assert "put_role_policy" in source and source.count("session.client(") == 2  # STS for the account, IAM: nothing else
 
 
 def test_update_env_file_replaces_and_appends(tmp_path: Path) -> None:

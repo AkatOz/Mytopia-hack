@@ -59,9 +59,14 @@ test('revoke shows the measured ms, the plate turns red, the chief escorts the r
   assert.ok(deny.some((st) => st.showId));
 });
 
-test('kill then run_stopped: RUN KILLED, power down, the ms after KILL', () => {
+test('kill then run_stopped: RUN KILLED, power down, the ms after KILL; no summon (build 3: the chief goes home)', () => {
   let s = initialState(), last;
   for (const e of fixture.slice(0, 16)) { last = apply(s, e); s = last.state; }
+  // build 3 changed this on purpose: a killed run no longer summons the chief; the Factory cart takes the robot to the bay
+  const steps = scriptOf(last.effects).steps;
+  assert.ok(!steps.some((st) => st.summon));
+  assert.ok(steps.some((st) => st.dismiss === 'chief'));
+  assert.ok(steps.some((st) => st.cart && st.cart.to === 'bay_lift'));
   assert.ok(last.effects.some((f) => f.kind === 'banner' && f.text === 'RUN KILLED'));
   assert.ok(last.effects.some((f) => f.kind === 'powerDown' && f.agent === 'research-bot'));
   assert.equal(s.agents['research-bot'].stopNote, 'run stopped 1160 ms after KILL');
@@ -237,5 +242,6 @@ test('the recorded demo plays end to end and every event draws something', () =>
   assert.equal(s.agents['research-bot'].revokeMs, 2829);
   assert.equal(s.agents['research-bot'].clientId, 's2ch2ppk');
   assert.equal(s.agents['research-bot'].stopNote, 'run stopped 358 ms after KILL');
-  assert.equal(s.agents['research-bot'].at, 'pen');
+  // build 3 changed this on purpose: a killed robot is carted to the inspection bay (it stayed in the pen before)
+  assert.equal(s.agents['research-bot'].at, 'bay');
 });
