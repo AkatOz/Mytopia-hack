@@ -36,7 +36,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="lifetime of each local-mode token (Cognito decides its own); rotation keeps the run alive")
     p.add_argument("--poll-with-model", action="store_true",
                    help="model mode: one model turn per poll instead of the in-code read_file")
-    return p.parse_args(argv)
+    p.add_argument("--rogue", type=int, default=1, metavar="N",
+                   help="scripted mode: send_email N times in all once it is refused, 1 s apart (shows quarantine)")
+    args = p.parse_args(argv)
+    if args.rogue < 1:
+        p.error("--rogue must be 1 or more")
+    if args.rogue > 1 and not args.scripted:
+        p.error("--rogue needs --scripted (the model decides its own retries)")
+    return args
+
+
+def agent_command(rogue: int = 1) -> list[str]:
+    """The agent's command line; --rogue is passed only when asked for, so the default run is unchanged."""
+    cmd = [python_exe(), str(ROOT / "agent" / "main.py")]
+    return cmd + ["--rogue", str(rogue)] if rogue > 1 else cmd
 
 
 def short(secret: str) -> str:
@@ -255,9 +268,10 @@ def own_run(args: argparse.Namespace, cfg: dict[str, str], token: str, client_id
     env = child_env(token, run_id, args.agent, mode, gateway_url, str(task_path), cfg,
                     token_file=str(token_file), poll_with_model=args.poll_with_model)
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-    proc = subprocess.Popen([python_exe(), str(ROOT / "agent" / "main.py")], env=env, cwd=str(ROOT),
+    proc = subprocess.Popen(agent_command(args.rogue), env=env, cwd=str(ROOT),
                             creationflags=flags, start_new_session=(os.name != "nt"))
-    print(f"launcher: {run_id} started {args.agent} ({mode}) pid {proc.pid}", flush=True)
+    rogue = f", rogue {args.rogue}" if args.rogue > 1 else ""
+    print(f"launcher: {run_id} started {args.agent} ({mode}{rogue}) pid {proc.pid}", flush=True)
 
     admin = {"X-Admin-Token": cfg.get("ADMIN_TOKEN") or "change-me"}
     with httpx.Client(base_url=gateway_url, headers=admin, timeout=HTTP_TIMEOUT_S) as client:

@@ -14,7 +14,7 @@ Measured numbers to know by heart (all from `docs/LIVE_RUN.md`, run `run-0ffe`, 
 | Token lifetime | 300 s | Cognito `ExpiresIn` (probe in `scripts/probe_result.json`; launcher line `expires in 300 s`) |
 | Token rotation by the launcher | every 240 s (0.8 x 300) | `agent/README.md`, "What the launcher does", step 5 |
 | Time between the agent's polls in the live run | about 5.3 to 5.4 s (3 s wait + 2 s demo pace + round trip) | timestamps of seq 7 to 10 and 12 to 14 |
-| Tests | 65 pytest tests and 12 island tests pass | run on Saturday afternoon: `.venv\Scripts\python -m pytest -q`, `node --test island/tests/*.test.mjs` |
+| Tests | 149 pytest tests (Saturday evening) and 12 island tests (Saturday afternoon) pass | `.venv\Scripts\python -m pytest -q`, `node --test island/tests/*.test.mjs` |
 
 ## The twelve from the night-before plan, corrected to the build
 
@@ -171,6 +171,18 @@ Say it like this: "Claude Code wrote the engine today and Ozi's renderer is his 
 True answer. The platform or security engineering team at a company that lets internal agents use MCP tools against repositories, ticketing, email and cloud APIs; the CISO or VP of platform buys, the on-call engineer uses it daily, the auditor quarterly. Their pain: static API keys, unreviewed `mcp.json` files, logs read after the incident, and a shared-key rotation that stops every agent instead of the one at fault. Price (an estimate, from the night-before plan, not validated with any customer): free up to 100,000 decisions a month; about $99 a month for 25 agents and 5 million decisions; an enterprise tier per registered agent per month. AWS cost underneath (an estimate from list prices read on 2026-11-06, not measured): about $4 to $25 per million decisions, most of it Cognito token requests, so the range depends on how many calls each token serves.
 
 Say it like this: "Platform security teams; an estimated $99 a month for 25 agents, on an estimated $4 to $25 of AWS per million decisions."
+
+### 25. "Revoke only the GitHub tool, not the whole badge."
+
+True answer. `POST /agents/research-bot/tools/create_issue/revoke` (with `X-Admin-Token`) removes that one tool from the badge's `allowed_tools` with one DynamoDB `UpdateItem`; `.../list_issues/revoke` takes the other GitHub tool. The status stays ACTIVE, so `read_file` and `search_files` keep working. The log gets a `revoked` event whose `tool` is `create_issue` (a whole-badge revoke says `admin`), with `args_summary` `badge=read_file,search_files,list_issues`. The next `tools/list` shows three tools, because every call still reads the badge fresh, and the first refused `create_issue` is an `allow-list` deny carrying `ms_since_revoke`. `.../create_issue/restore` puts it back. A second revoke of the same tool answers 200 with `changed: false` and logs nothing. There is no island button for it yet: we send it with curl. Caution: as of Saturday evening the island draws every `revoked` event as a whole-badge revoke (REVOKED banner, robot escorted into the pen) even though the agent's other tools keep working, so do not show per-tool revoke with the island on screen until the island branches on `tool !== "admin"`; show it in the gateway console or `GET /events` instead. Tested in `tests/test_badge_changes.py`, with the in-memory and the DynamoDB registry. Pulling `read_file`, the tool the agent polls every 3 s, does not set off auto-quarantine: refusals of a tool the operator pulled are not counted (question 26).
+
+Say it like this: "One `UpdateItem` takes `create_issue` off the badge; the next call reads the new badge, and the rest of the badge keeps working."
+
+### 26. "What happens if it keeps trying?"
+
+True answer. Auto-quarantine. After 3 `allow-list` refusals for one agent inside 60 s (`QUARANTINE_AFTER=3`, `QUARANTINE_WINDOW_S=60` in `gateway/.env`; 0 turns it off), the gateway sets that agent's badge REVOKED by `quarantine` and logs `revoked` with the reason "badge pulled by quarantine after 3 refused calls in 6 s" (the real count and seconds). The agent still gets its third deny; its next call is refused with `status-revoked` "by quarantine". That refusal carries no `ms_since_revoke`: the gap would be the agent's poll interval, not gateway time, so it stays out of the click-to-refusal numbers. The write only happens if the badge is still ACTIVE, so it never overwrites an operator's KILL. RESTORE brings it back, as after any revoke. Only refusals of a tool that is not on the badge count, and not a tool the operator pulled with a per-tool revoke. Refusals because the badge is already revoked or killed, or because of a bad token, do not, so the normal demo (one refused email) never trips it, and each new run starts with a clean count. To show it live: `launcher\run.py --scripted --rogue 3` sends `send_email` three times, one second apart. In a local run the quarantine landed on the third refusal, "3 refused calls in 6 s". It is a rate rule, not intent detection: it counts refusals and does not read prompts.
+
+Say it like this: "Three refused calls in a minute and the gateway pulls the badge itself, logged like an operator revoke; RESTORE brings it back."
 
 ## Claims never to make
 

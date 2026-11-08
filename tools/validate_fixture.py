@@ -17,10 +17,11 @@ FIELDS = ["seq", "ts", "run_id", "agent", "agent_mode", "tool", "args_summary", 
 DECISIONS = {"run_started", "allow", "deny", "revoked", "restored", "kill_requested", "run_stopped"}
 RULES = {"allow-list", "status-revoked", "status-killed", "token", "registry-unavailable",
          "header-mismatch", "admin", "harness"}
-TOOLS = {"read_file", "search_files", "create_issue", "list_issues", "send_email", "delete_file",
-         "tools/list", "admin", "harness"}
+BADGE_TOOLS = {"read_file", "search_files", "create_issue", "list_issues", "send_email", "delete_file"}
+TOOLS = BADGE_TOOLS | {"tools/list", "admin", "harness"}
 MODES = {"model", "scripted", "replay"}
 ADMIN_DECISIONS = {"revoked", "restored", "kill_requested"}
+PER_TOOL_DECISIONS = {"revoked", "restored"}
 RUN_DECISIONS = {"run_started", "run_stopped"}
 TS_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
@@ -46,8 +47,11 @@ def check_event(event: dict[str, Any]) -> list[str]:
         problems.append(f"seq {seq}: tool {event['tool']!r} not in the closed set")
     if event["agent_mode"] not in MODES:
         problems.append(f"seq {seq}: agent_mode {event['agent_mode']!r} not in the closed set")
-    if event["decision"] in ADMIN_DECISIONS and (event["tool"], event["rule"]) != ("admin", "admin"):
-        problems.append(f"seq {seq}: {event['decision']} needs tool admin and rule admin")
+    # revoked/restored may name one of the six tools: a per-tool badge change (tool admin means the whole badge)
+    admin_tools = {"admin"} | (BADGE_TOOLS if event["decision"] in PER_TOOL_DECISIONS else set())
+    if event["decision"] in ADMIN_DECISIONS and (event["tool"] not in admin_tools or event["rule"] != "admin"):
+        wanted = "tool admin or one of the six tools" if event["decision"] in PER_TOOL_DECISIONS else "tool admin"
+        problems.append(f"seq {seq}: {event['decision']} needs {wanted} and rule admin")
     if event["decision"] in RUN_DECISIONS and (event["tool"], event["rule"]) != ("harness", "harness"):
         problems.append(f"seq {seq}: {event['decision']} needs tool harness and rule harness")
     if not isinstance(event["seq"], int) or isinstance(event["seq"], bool):

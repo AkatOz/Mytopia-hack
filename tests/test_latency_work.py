@@ -379,6 +379,29 @@ def test_dynamo_registry_uses_a_consistent_get_item_and_aliased_update() -> None
     assert update["ExpressionAttributeValues"][":revoked_by"] == {"S": "operator"}
 
 
+def test_dynamo_registry_set_tools_is_one_conditional_update_of_the_tool_list() -> None:
+    dynamo = FakeDynamo()
+    registry = DynamoRegistry("mytopia_agents", FakeSession(dynamo))
+    row = registry.set_tools("research-bot", ["read_file", "list_issues"], "operator")
+    assert row["agent"] == "research-bot"
+    (name, update), = dynamo.calls  # no read: one UpdateItem
+    assert name == "update_item" and update["Key"] == {"agent": {"S": "research-bot"}}
+    assert update["UpdateExpression"] == "SET #allowed_tools = :allowed_tools, #updated_at = :updated_at"
+    assert update["ConditionExpression"] == "attribute_exists(#agent)"
+    assert update["ExpressionAttributeNames"] == {"#allowed_tools": "allowed_tools", "#updated_at": "updated_at",
+                                                  "#agent": "agent"}
+    assert update["ExpressionAttributeValues"][":allowed_tools"] == {"L": [{"S": "read_file"}, {"S": "list_issues"}]}
+    assert set(update["ExpressionAttributeValues"]) == {":allowed_tools", ":updated_at"}  # nothing new on the row
+    registry.set_tools("research-bot", [], "operator")
+    assert dynamo.calls[1][1]["ExpressionAttributeValues"][":allowed_tools"] == {"L": []}
+    dynamo.calls.clear()
+    registry.reset()  # both rows ACTIVE and back to the seed tool lists
+    tool_updates = [kw["ExpressionAttributeValues"][":allowed_tools"] for _, kw in dynamo.calls
+                    if ":allowed_tools" in kw["ExpressionAttributeValues"]]
+    assert tool_updates == [{"L": [{"S": t} for t in ("read_file", "search_files", "create_issue", "list_issues")]},
+                            {"L": [{"S": "read_file"}]}]
+
+
 # ----- D: warm-up and keep-warm -----
 class Recorder:
     """A stand-in for the handler, its parts and the boto3 session that records which warm-up steps ran."""

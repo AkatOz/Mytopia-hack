@@ -3,6 +3,7 @@ It speaks just enough MCP (initialize, ping, tools/list, tools/call, notificatio
 
 import asyncio
 import json
+import sys
 import time
 from datetime import datetime
 from typing import Any
@@ -62,7 +63,7 @@ def rpc_error(msg_id: Any, code: int, message: str, status: int = 200, headers: 
 
 
 class McpHandler:
-    """Owns the client -> agent map, the per-agent revoke times and the run table, and answers POST /mcp."""
+    """Owns the client -> agent map, the revoke clocks, the refusal counts and the run table, and answers POST /mcp."""
 
     def __init__(self, settings: Settings, registry: Registry, events: MemoryEventLog,
                  verifier: TokenVerifier, tools: ToolRunner) -> None:
@@ -72,6 +73,11 @@ class McpHandler:
         self.verifier = verifier
         self.tools = tools
         self.revoked_at_ms: dict[str, int] = {}   # agent -> revoke time, kept until that agent's first deny
+        # (agent, tool) -> per-tool revoke time, kept until that agent's first allow-list deny for that tool
+        self.tool_revoked_at_ms: dict[tuple[str, str], int] = {}
+        self.refusals: dict[str, list[float]] = {}  # agent -> monotonic times of its recent allow-list refusals
+        # (agent, tool) the operator took off the badge: refusals of those never count toward quarantine
+        self.pulled: set[tuple[str, str]] = set()
         self.runs: dict[str, dict] = {}           # run_id -> {"agent", "agent_mode", "pid", "task"}
         self.last_kill_ms: int | None = None      # the launcher's last measured kill-to-gone time (for GET /stats)
         # client_id -> agent id. Only says WHICH badge to read; the badge itself is read fresh on every call.
@@ -107,14 +113,37 @@ class McpHandler:
 
     # ----- state the control API updates -----
     def note_revoked(self, row: dict) -> None:
+        """An operator revoke: start the badge clock, and drop this agent's per-tool clocks (their first deny would
+        otherwise include the time the whole badge was off)."""
         ms = iso_to_ms(row.get("revoked_at"))
         self.revoked_at_ms[row["agent"]] = ms if ms is not None else int(time.time() * 1000)
+        self.drop_tool_clocks(row["agent"])
+
+    def drop_tool_clocks(self, agent: str) -> None:
+        for key in [k for k in self.tool_revoked_at_ms if k[0] == agent]:
+            self.tool_revoked_at_ms.pop(key, None)
 
     def note_restored(self, agent: str) -> None:
         self.revoked_at_ms.pop(agent, None)
+        self.refusals.pop(agent, None)  # a restored badge starts with a clean refusal count
+
+    def note_run_started(self, agent: str) -> None:
+        self.refusals.pop(agent, None)  # a new run starts with a clean refusal count
+
+    def note_tool_revoked(self, agent: str, tool: str) -> None:
+        self.tool_revoked_at_ms[(agent, tool)] = int(time.time() * 1000)
+        self.pulled.add((agent, tool))
+
+    def note_tool_restored(self, agent: str, tool: str) -> None:
+        self.tool_revoked_at_ms.pop((agent, tool), None)
+        self.pulled.discard((agent, tool))
+        self.refusals.pop(agent, None)  # refusals of the pulled tool must not linger in the count
 
     def clear(self) -> None:
         self.revoked_at_ms.clear()
+        self.tool_revoked_at_ms.clear()
+        self.pulled.clear()
+        self.refusals.clear()
         self.runs.clear()
         self.last_kill_ms = None
 
@@ -130,11 +159,18 @@ class McpHandler:
     def log(self, **fields: Any) -> dict:
         """Append one event (adding ms_since_revoke on the first deny after a revoke) and log one stderr line."""
         agent = fields.get("agent", "unknown")
-        # only a verified badge deny counts: a forged token only names its agent, so it must not stop the clock
-        if fields.get("decision") == "deny" and str(fields.get("rule", "")).startswith("status-"):
-            revoked_ms = self.revoked_at_ms.pop(agent, None)  # pop with a default: two concurrent denies cannot both claim it
-            if revoked_ms is not None:
-                fields["ms_since_revoke"] = int(time.time() * 1000) - revoked_ms
+        # only a verified badge deny counts: a forged token only names its agent, so it must not stop the clock.
+        # A status deny stops the whole-badge clock; an allow-list deny stops only the clock of its own tool.
+        # pop with a default: two concurrent denies cannot both claim a clock.
+        revoked_ms = None
+        if fields.get("decision") == "deny":
+            rule = str(fields.get("rule", ""))
+            if rule.startswith("status-"):
+                revoked_ms = self.revoked_at_ms.pop(agent, None)
+            elif rule == "allow-list":
+                revoked_ms = self.tool_revoked_at_ms.pop((agent, str(fields.get("tool"))), None)
+        if revoked_ms is not None:
+            fields["ms_since_revoke"] = int(time.time() * 1000) - revoked_ms
         record = self.events.append(**fields)
         if record["decision"] in ("allow", "deny"):
             rule = "" if record["decision"] == "allow" else f" {record['rule']}"
@@ -272,8 +308,50 @@ class McpHandler:
         result = await run_in_threadpool(self.tools.invoke, name, arguments) if decision.ok else denied_result(decision)
         # _meta is the MCP result's spec-legal extension field: the agent prints the gateway's own decision time
         result = {**result, "_meta": {"mytopia/latency_ms": latency, "mytopia/seq": record["seq"]}}
+        # a badge refusal of one of the six tools counts toward quarantine (never a status, token or gatehouse deny,
+        # and never a tool the operator pulled: the operator already acted on that one)
+        if (not decision.ok and decision.rule == "allow-list" and record["tool"] in TOOL_NAMES
+                and (agent, name) not in self.pulled):
+            tripped = self.count_refusal(agent)
+            if tripped is not None:
+                await self._quarantine(agent, run_id, *tripped)  # the agent still gets its deny, below
         await self._pace(started)
         return rpc_result(msg_id, result)
+
+    # ----- quarantine: the gateway pulls the badge itself after repeated refusals -----
+    def count_refusal(self, agent: str) -> tuple[int, float] | None:
+        """Note one allow-list refusal. When it is the QUARANTINE_AFTER-th inside QUARANTINE_WINDOW_S, clear the count
+        and return (refusals, seconds from the first to this one); else None. Runs on the event loop with no await,
+        so two concurrent refusals can never both trip it."""
+        after, window = self.settings.quarantine_after, self.settings.quarantine_window_s
+        if after <= 0:
+            return None
+        now = time.monotonic()
+        recent = [t for t in self.refusals.get(agent, []) if now - t <= window] + [now]
+        if len(recent) < after:
+            self.refusals[agent] = recent
+            return None
+        self.refusals.pop(agent, None)
+        return len(recent), now - recent[0]
+
+    async def _quarantine(self, agent: str, run_id: str, count: int, span_s: float) -> None:
+        """Set the badge REVOKED by "quarantine" and log a revoked event. One conditional UpdateItem (a write, only if the
+        badge is still ACTIVE, so it never overwrites an operator's KILL or REVOKE); the refused call itself still had
+        exactly one badge read. It starts no revoke clock: the first deny after it would measure the agent's own
+        pacing, not the gateway, so it carries no ms_since_revoke."""
+        secs = round(span_s)
+        try:
+            await run_in_threadpool(self.registry.set_status, agent, "REVOKED", "quarantine", "ACTIVE")
+        except RegistryUnavailable as exc:
+            print(f"quarantine: did not revoke {agent} (badge no longer ACTIVE or registry unavailable: {exc})",
+                  file=sys.stderr)
+            return
+        self.drop_tool_clocks(agent)
+        await run_in_threadpool(
+            self.log, run_id=run_id, agent=agent, agent_mode=self.agent_mode(run_id), tool="admin",
+            args_summary=f"quarantine: {count} refused calls in {secs} s", decision="revoked", rule="admin",
+            reason=f"badge pulled by quarantine after {count} refused calls in {secs} s", latency_ms=0)
+        self._decision_log.info(f"QUARANTINE {agent} after {count} refused calls in {secs} s")
 
     async def _pace(self, started: float) -> None:
         """DEMO_PACE is a floor on the whole call, not an extra sleep: a 190 ms call with pace 2.0 answers at 2.0 s."""

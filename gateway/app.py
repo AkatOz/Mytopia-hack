@@ -5,6 +5,7 @@ import hmac
 import json
 import os
 import sys
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,7 +25,7 @@ from gateway import warm
 from gateway.config import GATEWAY_DIR, REPO_ROOT, Settings
 from gateway.console import disable_quick_edit
 from gateway.events import DynamoEventLog, MemoryEventLog
-from gateway.mcp import MAX_LABEL_CHARS, McpHandler
+from gateway.mcp import MAX_LABEL_CHARS, TOOL_NAMES, McpHandler
 from gateway.registry import KNOWN_AGENTS, DynamoRegistry, MemoryRegistry, RegistryUnavailable, now_iso
 from gateway.stats import summarize
 from gateway.tokens import CognitoVerifier, LocalVerifier, TokenError
@@ -38,6 +39,8 @@ DEFAULT_SECRETS = {"change-me", "change-me-too"}
 ADMIN_ACTIONS = {"revoke": ("REVOKED", "revoked", "badge REVOKED by operator"),
                  "restore": ("ACTIVE", "restored", "badge ACTIVE again"),
                  "kill": ("KILLED", "kill_requested", "status KILLED by operator")}
+TOOL_ACTIONS = {"revoke": ("revoked", "pulled from", "already off"),
+                "restore": ("restored", "returned to", "already on")}
 AGENT_KEYS = ("agent", "name", "client_id", "status", "allowed_tools", "color")
 REPLAY_FILE = "/replay/demo.json"
 SHUTDOWN_FLUSH_S = 5.0
@@ -180,6 +183,57 @@ def create_app(settings: Settings) -> Starlette:
             args_summary="by=operator", decision=decision, rule="admin", reason=reason, latency_ms=0)
         return JSONResponse({"status": status, "seq": event["seq"]})
 
+    tool_lock = threading.Lock()  # this process is the only writer of allowed_tools (besides /demo/reset)
+
+    def change_tools(agent: str, tool: str, action: str) -> tuple[dict | None, bool]:
+        """Read the badge and, unless it already says what was asked, write the new tool list: (row, changed).
+        Runs in one worker thread under tool_lock, so two concurrent per-tool changes cannot lose one."""
+        with tool_lock:
+            row = registry.get(agent)
+            current = list((row or {}).get("allowed_tools") or [])
+            if row is None or (tool in current) == (action == "restore"):
+                return row, False
+            if action == "revoke":
+                wanted = [t for t in current if t != tool]
+            else:  # put it back in the catalog's order (unknown names, if a row was hand-edited, go last)
+                wanted = sorted([*current, tool],
+                                key=lambda t: TOOL_NAMES.index(t) if t in TOOL_NAMES else len(TOOL_NAMES))
+            return registry.set_tools(agent, wanted, "operator"), True
+
+    async def tool_action(request: Request) -> Response:
+        """POST /agents/{id}/tools/{tool}/revoke|restore: take one tool off the badge or put it back.
+        Idempotent: asking for the list the badge already has answers 200 with changed false and logs nothing."""
+        if not is_admin(request):
+            return unauthorized()
+        agent, tool, action = (request.path_params[k] for k in ("agent_id", "tool", "action"))
+        if agent not in KNOWN_AGENTS or action not in TOOL_ACTIONS:
+            return JSONResponse({"error": "unknown agent or action"}, status_code=404)
+        if tool not in TOOL_NAMES:
+            return JSONResponse({"error": f"{tool[:MAX_LABEL_CHARS]} is not one of the six tools"}, status_code=400)
+        decision, verb, already = TOOL_ACTIONS[action]
+        try:
+            row, changed = await run_in_threadpool(change_tools, agent, tool, action)
+        except RegistryUnavailable:
+            return unavailable()
+        if row is None:
+            return JSONResponse({"error": f"unknown agent {agent}"}, status_code=404)
+        if not changed:  # the badge already says what was asked
+            return JSONResponse({"status": row.get("status"), "seq": None, "agent": agent, "tool": tool,
+                                 "allowed_tools": list(row.get("allowed_tools") or []), "changed": False,
+                                 "note": f"{tool} was {already} badge {agent}; nothing changed, nothing logged"})
+        if action == "revoke":
+            handler.note_tool_revoked(agent, tool)
+        else:
+            handler.note_tool_restored(agent, tool)
+        tools_now = list(row.get("allowed_tools") or [])
+        run_id = handler.latest_run(agent)
+        event = await run_in_threadpool(
+            handler.log, run_id=run_id, agent=agent, agent_mode=handler.agent_mode(run_id), tool=tool,
+            args_summary=("badge=" + ",".join(tools_now))[:80], decision=decision, rule="admin",
+            reason=f"{tool} {verb} badge {agent} by operator", latency_ms=0)
+        return JSONResponse({"status": row.get("status"), "seq": event["seq"], "agent": agent, "tool": tool,
+                             "allowed_tools": tools_now, "changed": True})
+
     async def run_started(request: Request) -> Response:
         if not is_admin(request):
             return unauthorized()
@@ -195,6 +249,7 @@ def create_app(settings: Settings) -> Starlette:
         run = {"agent": agent, "agent_mode": str(body.get("agent_mode") or "model")[:MAX_LABEL_CHARS],
                "pid": body.get("pid"), "task": body.get("task", "")}
         handler.runs[run_id] = run
+        handler.note_run_started(agent)  # refusals from an earlier run never count toward this run's quarantine
         client = str(body.get("client_id") or "")[:8]
         if not client:  # the launcher may omit client_id; fall back to the badge row
             try:
@@ -272,6 +327,7 @@ def create_app(settings: Settings) -> Starlette:
         Route("/agents", get_agents, methods=["GET"]),
         Route("/agents/{agent_id}/status", get_status, methods=["GET"]),
         Route("/agents/{agent_id}/{action}", admin_action, methods=["POST"]),
+        Route("/agents/{agent_id}/tools/{tool}/{action}", tool_action, methods=["POST"]),
         Route("/runs/{run_id}/started", run_started, methods=["POST"]),
         Route("/runs/{run_id}/stopped", run_stopped, methods=["POST"]),
         Route("/demo/reset", demo_reset, methods=["POST"]),

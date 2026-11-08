@@ -14,6 +14,8 @@ All numbers below come from the first full live run on AWS, Sat 2026-11-07 at 1:
 4. **Revoke mid-task.** An operator clicks REVOKE on the island. The agent's next call came **494 ms** later and was refused, while its token still had **254 s** left: `badge REVOKED at 21:40:45 by operator (token: signature OK, expires in 254 s)`.
 5. **Block what follows and stop the run.** Every later call is refused. KILL flips the badge to KILLED. The launcher kills the agent's process tree (`taskkill in 534 ms`), and the island reads `run stopped 1274 ms after KILL, exit 1 (killed by harness)`.
 
+Added after that live run and tested locally: per-tool revoke (take one tool, such as `create_issue`, off a badge and leave the rest working), and auto-quarantine (after 3 refused calls in 60 s the gateway pulls the badge itself; try `launcher\run.py --scripted --rogue 3`).
+
 ## The required flow and where each step is met
 
 Prompt 1 asks for four steps. We add two more, a blocked disallowed action and a hard stop, labelled "borrowed" below. The "proof" column quotes lines from [docs/LIVE_RUN.md](docs/LIVE_RUN.md).
@@ -61,6 +63,16 @@ What each arrow carries:
 - The island sends GETs and four admin POSTs (revoke, restore, kill and `/demo/reset`) to the gateway and nothing else. It never calls AWS and draws only events it reads from `GET /events`.
 - The agent can reach two things: the gateway's `/mcp`, and Bedrock's model endpoint. The six tools run in a Lambda that only the gateway's role may invoke.
 - The launcher talks to Cognito (to mint tokens) and to the gateway's control API (to report runs and read the badge status). It is the agent's parent process.
+
+The operator API (`X-Admin-Token` required; the full contract is in [contract/README.md](contract/README.md)):
+
+| Route | What it does | Logged as |
+|---|---|---|
+| `POST /agents/{id}/revoke`, `/restore`, `/kill` | sets the whole badge REVOKED, ACTIVE or KILLED (`set_status`) | `revoked` / `restored` / `kill_requested`, tool `admin` |
+| `POST /agents/{id}/tools/{tool}/revoke` | takes one of the six tools off the badge (`set_tools`); the rest keeps working. 200 with `changed: false` if it was already off | `revoked`, tool = the tool's name, `args_summary` `badge=<tools left>` |
+| `POST /agents/{id}/tools/{tool}/restore` | puts the tool back on the badge. 200 with `changed: false` if it was already on | `restored`, tool = the tool's name |
+| `POST /demo/reset` | both badges ACTIVE with their seed tools, new chain | (the chain starts again) |
+| (no route: the gateway itself) | auto-quarantine: 3 `allow-list` refusals in 60 s set the badge REVOKED by `quarantine` (`QUARANTINE_AFTER`, `QUARANTINE_WINDOW_S`) | `revoked`, tool `admin`, `quarantine: 3 refused calls in 6 s` |
 
 Where every credential lives (details in [docs/AWS_CREDENTIAL_DESIGN.md](docs/AWS_CREDENTIAL_DESIGN.md) and [infra/README.md](infra/README.md)):
 

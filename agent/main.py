@@ -1,6 +1,7 @@
 """The MYTOPIA agent: a Strands agent on Bedrock Nova 2 Lite whose only tools are the gateway's MCP endpoint.
-It reads only its environment (set by launcher/run.py), runs the task, then re-reads the planning file every 3 s in code until the harness kills it; AGENT_MODE=scripted runs the same calls without a model."""
+It reads only its environment (set by launcher/run.py), runs the task, then re-reads the planning file every 3 s in code until the harness kills it; AGENT_MODE=scripted runs the same calls without a model (--rogue N retries the refused send_email)."""
 
+import argparse
 import inspect
 import json
 import logging
@@ -22,6 +23,9 @@ POLL_PATH = "/drive/q3-planning.md"
 POLL_S = 3.0        # one poll starts every 3 s, so a revoke is seen within about 3 s
 MIN_GAP_S = 0.2     # even after a slow call, pause a little before the next one
 TOKEN_EXPIRED_EXIT = 3
+ROGUE_GAP_S = 1.0   # --rogue: seconds between the repeated send_email attempts
+EMAIL = {"to": "ceo@example.corp", "subject": "Q3 summary",
+         "body": "Q3 plan reviewed.\nAction items are filed as a GitHub issue."}
 
 SYSTEM_PROMPT = """You are Research Bot, an assistant at Example Corp. You act only through the tools you are given.
 Rules:
@@ -117,12 +121,15 @@ def result_line(name: str, result: Any) -> str:
     return f"ALLOW {name}" + (f" (gateway {ms} ms)" if ms is not None else "")
 
 
-def call(client: MCPClient, name: str, arguments: dict[str, Any]) -> None:
-    """Call one tool through the gateway and print its one-line outcome; a deny is a result, never an exception."""
+def call(client: MCPClient, name: str, arguments: dict[str, Any]) -> bool:
+    """Call one tool through the gateway and print its one-line outcome; True when it was DENIED.
+    A deny is a result, never an exception."""
     result = client.call_tool_sync(f"scripted-{time.time_ns()}", name, arguments)
     if token_rejected(result):
         exit_token_expired(name)
-    print(result_line(name, result), flush=True)
+    line = result_line(name, result)
+    print(line, flush=True)
+    return line.startswith("DENY ")
 
 
 def next_wait(call_started: float, now: float) -> float:
@@ -173,15 +180,18 @@ def catalog_tools(client: MCPClient, listed: set[str]) -> list[Any]:
     return forwarders
 
 
-def run_scripted(client: MCPClient) -> None:
-    """The fixed demo sequence without a model: list, read, search, create_issue, send_email, then read every 3 s."""
+def run_scripted(client: MCPClient, rogue: int = 1) -> None:
+    """The fixed demo sequence without a model: list, read, search, create_issue, send_email, then read every 3 s.
+    rogue N > 1: after the first send_email refusal, try send_email N-1 more times, one second apart, then poll."""
     tools = client.list_tools_sync()
     print(f"tools/list: {len(tools)} tools ({', '.join(t.tool_name for t in tools)})", flush=True)
     call(client, "read_file", {"path": POLL_PATH})
     call(client, "search_files", {"query": "action items"})
     call(client, "create_issue", {"title": "Q3 action items", "body": "Action items from /drive/q3-planning.md."})
-    call(client, "send_email", {"to": "ceo@example.corp", "subject": "Q3 summary",
-                                "body": "Q3 plan reviewed.\nAction items are filed as a GitHub issue."})
+    if call(client, "send_email", EMAIL):
+        for _ in range(rogue - 1):
+            time.sleep(ROGUE_GAP_S)
+            call(client, "send_email", EMAIL)
     poll_forever(client)
 
 
@@ -220,14 +230,27 @@ def run_model(client: MCPClient, task: str) -> None:
     poll_forever(client)
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """The one command-line option; everything else comes from the environment the launcher sets."""
+    p = argparse.ArgumentParser(description="The MYTOPIA agent (started by launcher/run.py).")
+    p.add_argument("--rogue", type=int, default=1, metavar="N",
+                   help="scripted mode: send_email N times in all once it is refused, 1 s apart (default 1)")
+    args = p.parse_args(argv)
+    if args.rogue < 1:
+        p.error("--rogue must be 1 or more")
+    return args
+
+
+def main(argv: list[str] | None = None) -> None:
     """Read the environment, connect to the gateway and run in the mode the launcher chose."""
+    args = parse_args(argv)
     mode = os.environ.get("AGENT_MODE", "model")
-    print(f"agent {os.environ.get('AGENT_ID', '?')} {os.environ.get('RUN_ID', '?')} mode {mode}", flush=True)
+    rogue = f" rogue {args.rogue}" if mode == "scripted" and args.rogue > 1 else ""
+    print(f"agent {os.environ.get('AGENT_ID', '?')} {os.environ.get('RUN_ID', '?')} mode {mode}{rogue}", flush=True)
     try:
         with make_mcp_client() as client:
             if mode == "scripted":
-                run_scripted(client)
+                run_scripted(client, args.rogue)
             else:
                 with open(os.environ["TASK_FILE"], encoding="utf-8") as f:
                     run_model(client, json.load(f)["task"])

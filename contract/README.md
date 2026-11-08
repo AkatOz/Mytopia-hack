@@ -29,10 +29,10 @@ Identical in the gateway's memory, in DynamoDB, in `GET /events` and in the fixt
 - `ts`: UTC, ISO 8601 with milliseconds and `Z`, stamped by the gateway.
 - `decision` (closed set): `run_started`, `allow`, `deny`, `revoked`, `restored`, `kill_requested`, `run_stopped`.
 - `rule` (closed set): `allow-list`, `status-revoked`, `status-killed`, `token`, `registry-unavailable`, `header-mismatch`, `admin`, `harness`.
-- `tool`: one of `read_file`, `search_files`, `create_issue`, `list_issues`, `send_email`, `delete_file`, or `tools/list`, or `admin` (for `revoked`, `restored`, `kill_requested`), or `harness` (for `run_started`, `run_stopped`). A `deny` whose tool is `tools/list` belongs to the gatehouse, not to a tool building.
+- `tool`: one of `read_file`, `search_files`, `create_issue`, `list_issues`, `send_email`, `delete_file`, or `tools/list`, or `admin` (for `revoked`, `restored`, `kill_requested`), or `harness` (for `run_started`, `run_stopped`). A `deny` whose tool is `tools/list` belongs to the gatehouse, not to a tool building. A `revoked`/`restored` event whose tool names one of the six tools is a per-tool badge change; tool `admin` means the whole badge. A per-tool change has `rule` `admin`, `args_summary` `badge=<the tools now on the badge, comma-joined>` and `reason` `<tool> pulled from badge <agent> by operator` or `<tool> returned to badge <agent> by operator`. A whole-badge `revoked` with `args_summary` `quarantine: <n> refused calls in <s> s` was made by the gateway itself after repeated `allow-list` refusals (reason `badge pulled by quarantine after <n> refused calls in <s> s`).
 - `agent_mode`: `model`, `scripted` or `replay`.
 - `args_summary`: at most 80 characters, never a secret.
-- `ms_since_revoke`: a number only on the first `deny` after a `revoked` for that agent; otherwise `null`.
+- `ms_since_revoke`: a number only on the first `deny` after an operator `revoked` for that agent, and after a per-tool `revoked` only on the first `allow-list` deny of that agent for that tool; otherwise `null`. A quarantine `revoked` (`args_summary` starting `quarantine:`) starts no clock, so the deny after it has `null`.
 - `prev_hash`, `hash`: SHA-256 hex; `hash` covers the canonical JSON (`sort_keys`, compact separators) of the record without `hash`; the first record's `prev_hash` is `"genesis"`. The fixture's hashes are placeholders.
 - `run_stopped` carries the exit code in `reason` and the pid in `args_summary`. A kill is marked two ways: a `kill_requested` for that agent precedes it, and `reason` reads `exit <code> (killed by harness)` with `args_summary` `pid=<pid> killed by harness`. A run that ends on its own reads `exit <code> (exited)` and `pid=<pid> exited`; the island shows RUN ENDED for it, with no fire.
 - The gateway never restarts `seq` below the last value it served: on start it resumes the current chain's counter; only `POST /demo/reset` starts a new chain. The admin routes accept both agent ids.
@@ -69,9 +69,12 @@ Operator-facing (`X-Admin-Token` required):
 POST /agents/{id}/revoke    -> {"status":"REVOKED","seq":9}
 POST /agents/{id}/restore   -> {"status":"ACTIVE","seq":17}
 POST /agents/{id}/kill      -> {"status":"KILLED","seq":14}
+POST /agents/{id}/tools/{tool}/revoke   -> {"status":"ACTIVE","seq":20,"agent":"research-bot","tool":"create_issue","allowed_tools":["read_file","search_files","list_issues"],"changed":true}
+POST /agents/{id}/tools/{tool}/restore  -> the same shape; asking for what the badge already has answers 200 with "changed":false, "seq":null and a "note", and logs nothing
+                                           (unknown agent or action 404; a tool outside the six 400)
 POST /runs/{run_id}/started {"agent":"research-bot","task":"Q3 planning","agent_mode":"model","pid":4120,"client_id":"<optional>","expires_in":300} -> the event
 POST /runs/{run_id}/stopped {"exit_code":1,"how":"killed by harness"}                                   -> the event
-POST /demo/reset            -> {"ok":true,"chain":"chain-..."}   both agents ACTIVE, events cleared, new chain
+POST /demo/reset            -> {"ok":true,"chain":"chain-..."}   both agents ACTIVE with their seed tool lists, events cleared, new chain
 POST /demo/replay           -> {"ok":false,"recording":"/replay/demo.json","reason":"..."}   the gateway never re-runs a recording; the island plays it (press R, or ?replay=/replay/demo.json)
 ```
 

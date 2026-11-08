@@ -31,6 +31,8 @@ class Settings:
     tools_function: str = "mytopia-tools"
     events_jsonl: Path | None = None    # local twin of the events table; None means no file
     island_dir: Path | None = None      # override of the static folder served at /
+    quarantine_after: int = 3           # allow-list refusals in the window that make the gateway pull the badge; 0 = off
+    quarantine_window_s: float = 60.0   # the window those refusals are counted in
 
     @classmethod
     def from_env(cls, env_file: Path = GATEWAY_DIR / ".env") -> "Settings":
@@ -62,6 +64,8 @@ class Settings:
             tools_function=get("TOOLS_FUNCTION", "mytopia-tools"),
             events_jsonl=resolve(jsonl),
             island_dir=resolve(island) if island else None,
+            quarantine_after=int(get("QUARANTINE_AFTER", "3")),
+            quarantine_window_s=float(get("QUARANTINE_WINDOW_S", "60")),
         )
 
 
