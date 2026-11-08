@@ -499,8 +499,9 @@ export function inquestOf(state, id, chainVerified = null) {
   rows.forEach((e, i) => { if (e.decision === 'run_started') from = i; });
   const run = from >= 0 ? rows.slice(from) : rows;
   const runId = from >= 0 ? rows[from].run_id || null : null;
-  const denies = run.filter((e) => e.decision === 'deny');
-  const decided = run.filter((e) => e.decision === 'allow' || e.decision === 'deny');
+  // tool calls only, like the gateway's GET /agents/{id}/inquest: a tools/list row is a listing, not a call
+  const denies = run.filter((e) => e.decision === 'deny' && ALL_TOOLS.includes(e.tool));
+  const decided = run.filter((e) => (e.decision === 'allow' || e.decision === 'deny') && ALL_TOOLS.includes(e.tool));
 
   const groups = [];
   for (const e of denies) {

@@ -148,3 +148,24 @@ A functional run of the Factory flow on a local-mode gateway (port 8790, local i
 | `POST /agents/billing-bot/retire` | 200; the roster is the two seed badges again; the env lines are gone |
 
 The island, polled live during the run (headless Edge, 1280x720): the Billing Bot tab appeared with its Gold medal, the pulled chip struck red, the padlocked `delete_file`; the Diamond card showed six green chips. One bug found and fixed from this run (commit d6dec55): a quarantine escort cut short by the kill left the robot standing mid-way with no inquest; a killed robot now always gets the cart. Recording of this run: `replay/demo3-local.json` (71 rows, chain `chain-20261108T033836Z`, real hashes, local client ids).
+
+## Seventh run: build 3 on real AWS (Sat 2026-11-07, 7:55 PM PT, scripted clients, Cognito, DynamoDB, Lambda)
+
+The same flow as the sixth run, on the AWS gateway on port 8787 after the role gained the Factory permissions (`infra/role_policy.py`, run by Bob at 7:53 PM). Recording: `replay/demo3.json` (55 rows, chain `chain-20261108T035444Z`, real hashes, real client ids). The whole run took 87 s.
+
+| Step | What happened (times from the gateway's rows) |
+|---|---|
+| `POST /agents` (Billing Bot, Gold, 5 tools, teal) | 201 in 1.2 s: a real Cognito app client `billing-bot` in pool us-east-1_Se7ydR6ys (listed with the ws profile), the badge row in `mytopia_agents` (tier gold, made_by factory, created_at 03:54:45Z), the two lines in the launcher's env file; no secret in the response |
+| launch `--scripted --patrol` | `token OK` with a 5-minute Cognito token; `run_started` 1.5 s after the mint; `ALLOW read_file (gateway 86 ms)` and so on, one listed tool every 3 s |
+| grant `delete_file` to the Gold badge | 403 `delete_file is above the Gold ceiling`; nothing logged |
+| pull `send_email` | refused at the Mail gate once, 11,572 ms after the pull (the patrol's stale list), then gone from its list |
+| grant `send_email` back | allowed at the Mail gate 15 s later (the next cycle) |
+| promote to Diamond, grant `delete_file` | allowed at the Admin gate on the next cycle |
+| demote to Silver | trimmed to four tools; the next `tools/list` said `4 of 6 tools visible`; no refusals, no quarantine |
+| `research-bot --scripted --rogue 3` | three `send_email` refusals in 6 s, `badge pulled by quarantine after 3 refused calls in 6 s` (seq 48), the next poll refused `status-revoked` |
+| `GET /agents/research-bot/inquest` | outcome quarantined; allowed 3, refused 4; send_email x3 allow-list, read_file x1 status-revoked; the verdict names send_email and the Silver badge |
+| KILL research-bot, KILL billing-bot | psutil kill 116 ms; billing-bot's launcher exited 441 ms after KILL; `kill_to_stopped_ms` 113 |
+| retire billing-bot | 200; the Cognito client deleted (the pool lists the two seed clients again), the row gone, the env lines gone, `retired` at seq 56 |
+| gateway latency over the 42 decisions | allow p50 79 ms, p95 120 ms, max 150; deny p50 82 ms; all p50 79 ms, p95 110 ms |
+
+Numbers to say: minting an agent is one Cognito call and one DynamoDB write, about a second; a grant or a pull reaches the gate within one patrol cycle (18 s at most, 3 s per tool), a pulled tool is refused exactly once if the agent had already listed it; the gateway's own decision time stayed at about 80 ms with the Factory rows in the chain; kill to process gone 116 ms.
