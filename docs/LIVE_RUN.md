@@ -128,3 +128,23 @@ So the Python the gateway runs per call is well under one percent of a decision;
 ## Fifth live run: the first call after a reset (Sat 2026-11-07, 5:34 PM PT, scripted client, real AWS)
 
 The first tool call after a reset had cost 271 ms and 477 ms in the two runs before: the launcher's 250 ms status poll and the agent's first call overlapped on the one warm connection in the DynamoDB client's pool, so the second read opened a new TLS connection on the request path. The gateway now keeps three pooled connections warm (at startup, every minute, and right after `/demo/reset`). This run, chain `chain-20261108T013422Z`: `tools/list` 151 ms, then `read_file` **81 ms**, `search_files` 77, `create_issue` 83, the refused `send_email` 77, every later decision 76 to 79 ms; revoke to first refusal 293 ms; the agent's terminal printed `ALLOW read_file (gateway 81 ms)` as its first tool line.
+
+## Sixth run: build 3 end to end, local mode (Sat 2026-11-07, 8:10 PM PT, scripted clients, no AWS)
+
+A functional run of the Factory flow on a local-mode gateway (port 8790, local identities and the in-memory registry), before the AWS role gained the Factory permissions. The timings that matter here are behaviours, not network latency: every decision cost 0 to 2 ms because nothing left the laptop.
+
+| Step | What happened |
+|---|---|
+| `POST /agents` (Billing Bot, Gold, 5 tools, teal) | 201 in 0.1 s; the two client lines appeared in the launcher's env file; the `created` row is seq 1 of the chain; no secret in the response |
+| `launcher/run.py --agent billing-bot --scripted --patrol` | `launching Billing Bot (Gold badge, 5 tools)`; `run_started` 0.6 s after the mint; the patrol lists its tools, then calls each listed one every 3 s |
+| grant `delete_file` to a Gold badge | 403 `delete_file is above the Gold ceiling`; nothing logged |
+| pull `send_email` | the patrol's stale list tried it once: refused at the Mail gate 11.6 s after the pull (`ms_since_revoke` 11628), then the tool dropped out of its list |
+| grant `send_email` back | allowed at the Mail gate on the next cycle (15 s later) |
+| promote to Diamond, grant `delete_file` | allowed at the Admin gate on the next cycle |
+| demote to Silver | the badge trimmed to four tools; the patrol listed four and never called the other two: no refusals, no quarantine |
+| `research-bot --scripted --rogue 3` beside it | three `send_email` refusals in 6 s, then `badge pulled by quarantine after 3 refused calls in 6 s`; the next poll refused with `status-revoked` |
+| `GET /agents/research-bot/inquest` | outcome quarantined; calls allowed 3, refused 4; refused_by_tool send_email x3 (allow-list) and read_file x1 (status-revoked); verdict "Attempted send_email 3 times; its Silver badge does not hold it; the gateway refused every attempt, and pulled the badge itself." |
+| KILL both | research-bot: psutil kill 72 ms, `run_stopped` 108 ms after the kill; billing-bot: launcher exit 201 ms after KILL, `kill_to_stopped_ms` 93 |
+| `POST /agents/billing-bot/retire` | 200; the roster is the two seed badges again; the env lines are gone |
+
+The island, polled live during the run (headless Edge, 1280x720): the Billing Bot tab appeared with its Gold medal, the pulled chip struck red, the padlocked `delete_file`; the Diamond card showed six green chips. One bug found and fixed from this run (commit d6dec55): a quarantine escort cut short by the kill left the robot standing mid-way with no inquest; a killed robot now always gets the cart. Recording of this run: `replay/demo3-local.json` (71 rows, chain `chain-20261108T033836Z`, real hashes, local client ids).

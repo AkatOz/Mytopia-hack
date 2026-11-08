@@ -4,6 +4,7 @@ Rows are the two seed badges (made_by seed) plus any the Factory minted (made_by
 
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -172,6 +173,7 @@ class DynamoRegistry:
         from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 
         self.table_name = table_name
+        self._scan_refused_until = 0.0  # monotonic time until which a refused Scan is not retried (one log line a minute)
         self._to_python = TypeDeserializer().deserialize
         self._to_dynamo = TypeSerializer().serialize
         self._client = None
@@ -252,12 +254,15 @@ class DynamoRegistry:
         read one by one instead, so the demo badges keep working; a real outage fails those reads too and raises."""
         rows: list[dict] = []
         start: dict | None = None
+        if time.monotonic() < self._scan_refused_until:  # refused less than a minute ago: the seed rows, quietly
+            return [row for row in (self.get(a) for a in KNOWN_AGENTS) if row]
         while True:
             extra = {"ExclusiveStartKey": start} if start else {}
             try:
                 response = self._call("scan", ConsistentRead=True, **extra)
             except RegistryUnavailable as exc:
-                print(f"registry: Scan failed ({exc}); reading the seed badges one by one", file=sys.stderr)
+                self._scan_refused_until = time.monotonic() + 60.0
+                print(f"registry: Scan failed ({exc}); reading the seed badges one by one for the next minute", file=sys.stderr)
                 return [row for row in (self.get(a) for a in KNOWN_AGENTS) if row]
             rows += [row for row in (self._row(item) for item in response.get("Items", [])) if row]
             start = response.get("LastEvaluatedKey")
