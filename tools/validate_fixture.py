@@ -17,7 +17,7 @@ FIELDS = ["seq", "ts", "run_id", "agent", "agent_mode", "tool", "args_summary", 
 DECISIONS = {"run_started", "allow", "deny", "revoked", "restored", "kill_requested", "run_stopped",
              "created", "tier_changed", "retired"}
 RULES = {"allow-list", "status-revoked", "status-killed", "token", "registry-unavailable",
-         "header-mismatch", "admin", "harness", "factory"}
+         "header-mismatch", "egress", "admin", "harness", "factory"}
 BADGE_TOOLS = {"read_file", "search_files", "create_issue", "list_issues", "send_email", "delete_file"}
 TOOLS = BADGE_TOOLS | {"tools/list", "admin", "harness"}
 MODES = {"model", "scripted", "replay"}
@@ -60,6 +60,8 @@ def check_event(event: dict[str, Any]) -> list[str]:
             (event["decision"] in FACTORY_DECISIONS and event["tool"] != "admin"):
         problems.append(f"seq {seq}: {event['decision']} with rule {event['rule']}: created, tier_changed and retired "
                         "need tool admin and rule factory, and only they use rule factory")
+    if event["rule"] == "egress" and (event["decision"], event["tool"]) != ("deny", "send_email"):
+        problems.append(f"seq {seq}: rule egress is only for a deny of send_email")
     if not isinstance(event["seq"], int) or isinstance(event["seq"], bool):
         problems.append(f"seq {seq}: seq is not an integer")
     if not isinstance(event["ts"], str) or not TS_PATTERN.match(event["ts"]):

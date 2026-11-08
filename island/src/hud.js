@@ -30,11 +30,11 @@ export const DID = { read_file: 'read a document', search_files: 'searched the d
 export const TO_DO = { read_file: 'read a document', search_files: 'search the drive', create_issue: 'file a ticket', list_issues: 'list the tickets', send_email: 'send an email', delete_file: 'delete a file', 'tools/list': 'see which tools it may use' };
 // where a robot stands, in words
 export const WHERE = {
-  hatch: 'below the dock (no run yet)', plaza: 'on the plaza', gh_window: 'at the gatehouse window',
+  hatch: 'below the dock (no run going)', plaza: 'on the plaza', gh_window: 'at the gatehouse window',
   door_files: 'at the FILES tower', door_github: 'at the GitHub studio', door_mail: 'at the Mail cottage', door_admin: 'at the Admin courthouse',
   pen: 'in the pen', bay: 'in the inspection bay', yard: 'in the Factory yard', factory: 'inside the Factory',
 };
-const RULE_WORDS = { 'allow-list': 'not on the badge', 'status-revoked': 'badge revoked', 'status-killed': 'run killed', token: 'bad token', 'registry-unavailable': 'badge store unreachable', 'header-mismatch': 'wrong agent header' };
+const RULE_WORDS = { egress: 'outside the company', 'allow-list': 'not on the badge', 'status-revoked': 'badge revoked', 'status-killed': 'run killed', token: 'bad token', 'registry-unavailable': 'badge store unreachable', 'header-mismatch': 'wrong agent header' };
 const HOME_WORDS = { files: 'FILES gate', github: 'GitHub gate', mail: 'Mail gate', admin: 'Admin gate', gatehouse: 'gatehouse window' };
 
 // the tier table: GET /tiers answers [{tier, rank, name, line, ceiling}]; the medal colours always come from tiers.js
@@ -67,7 +67,7 @@ export function nextTier(tier, dir, tiers = TIERS) {
 const endedOnItsOwn = (a) => a.plate === 'stopped' && !a.stopNote.startsWith('run stopped');
 // the status pill: [text, css suffix]
 export function statusPill(a) {
-  if (endedOnItsOwn(a)) return ['RUN ENDED', 'ended'];
+  if (endedOnItsOwn(a)) return [/run ended: job stopped/.test(a.stopNote) ? 'JOB STOPPED' : /run ended: job done/.test(a.stopNote) ? 'JOB DONE' : 'RUN ENDED', 'ended']; // build 5
   if (a.plate === 'revoked' && a.quarantined) return ['QUARANTINED', 'revoked'];
   return [PLATE_LABEL[a.plate] || a.plate, a.plate];
 }
@@ -91,7 +91,7 @@ export function chipState(a, tool, pending = {}, tiers = TIERS) {
 }
 // the note: how fast a revoke bit (a badge revoke or one pulled tool), and how the run ended
 export function cardNote(a) {
-  const bit = a.revokeMs == null ? '' : a.revokeTool ? `blocked ${a.revokeMs} ms after the tool was pulled` : `blocked ${a.revokeMs} ms after REVOKE`;
+  const bit = a.revokeMs == null ? '' : a.revokeTool ? `its next ${a.revokeTool} call was refused (${(a.revokeMs / 1000).toFixed(1)} s after the pull)` : `blocked ${a.revokeMs} ms after REVOKE`;
   return { lines: [bit, a.stopNote].filter(Boolean), bad: a.revokeMs != null || a.stopNote.startsWith('run stopped') };
 }
 // "read a document · allowed · 86 ms" / "tried to delete a file · refused · 9 ms"
@@ -149,9 +149,60 @@ export const slugify = (name) => String(name || '').toLowerCase().replace(/[^a-z
 const medal = (tier, size = '') => `<span class="medal${size}" style="--m:${(TIERS[tier] || {}).hex || '#9a9a92'}" title="${esc((TIERS[tier] || {}).name || tier)}"></span>`;
 const squares = (a) => `<span class="squares">${ALL_TOOLS.map((t) => `<i class="${a.allowedTools.includes(t) ? 'on' : ''}" title="${t}"></i>`).join('')}</span>`;
 
+// ---------- build 4: jobs and START (no DOM: the tests read them) ----------
+// A run is going while the plate says so (KILL REQUESTED counts: the launcher has not stopped it yet).
+// build 4 (review): the reducer's run flag first (run_started .. run_stopped); the plate only for a state without it
+export const runActive = (a) => (typeof a.running === 'boolean' ? a.running : ['active', 'revoked', 'kill'].includes(a.plate));
+// May START be pressed for this agent? And the one plain line under the button.
+export function startState(a, ui) {
+  if (ui.source === 'replay') return { ok: false, why: 'a recording: nothing to start' };
+  if (ui.pending['start:' + a.id]) return { ok: false, sent: true, why: 'starting its program…' };
+  if (ui.pending.reset) return { ok: false, why: 'RESET in progress…' }; // build 4 (review): never START into a reset
+  if (runActive(a)) return { ok: false, why: 'working now · KILL stops it' };
+  const st = a.status || 'ACTIVE';
+  if (st !== 'ACTIVE') return { ok: false, why: `badge ${a.quarantined && st === 'REVOKED' ? 'QUARANTINED' : st}: RESTORE first` };
+  return { ok: true, why: 'run its job now' };
+}
+// GET /jobs answers [{job, name, line, tools, patrol?}]; anything else gives [] (and the job controls stay hidden)
+export function normJobs(json) {
+  return (Array.isArray(json) ? json : []).filter((j) => j && typeof j.job === 'string' && typeof j.name === 'string')
+    .map((j) => ({ job: j.job, name: j.name, line: String(j.line || ''), tools: (Array.isArray(j.tools) ? j.tools : []).filter((t) => ALL_TOOLS.includes(t)), patrol: !!j.patrol }));
+}
+// The job a badge fits best: of the ordinary jobs (not the patrol, not the attack drill), the one that uses the most
+// of these tools and needs no other; else the patrol. Diamond + delete_file -> cleanup; read + search -> research.
+export function suggestJob(jobs, tools) {
+  const have = new Set(tools); let best = null;
+  for (const j of jobs) {
+    if (j.patrol || j.job === 'drill' || !j.tools.length || !j.tools.every((t) => have.has(t))) continue;
+    if (!best || j.tools.length > best.tools.length) best = j;
+  }
+  return best ? best.job : ((jobs.find((j) => j.patrol) || jobs[0] || {}).job || '');
+}
+// "uses read_file, send_email · send_email not on this badge: the gateway refuses it" (bad: true when one is missing)
+export function jobHint(job, tools) {
+  if (!job) return { text: '', bad: false };
+  if (job.patrol) return { text: 'uses every tool on its badge, one at a time', bad: false };
+  const missing = job.tools.filter((t) => !tools.includes(t));
+  const tail = missing.length ? ` · ${missing.join(', ')} not on this badge: the gateway refuses ${missing.length === 1 ? 'it' : 'them'}` : ' · all on this badge';
+  return { text: `uses ${job.tools.join(', ')}${tail}`, bad: missing.length > 0 };
+}
+
 // io: { source, staleAfterMs, lastGoodPoll(), recordedOn(), getState(), selected(), inRoom(), tiers(), rawInquest(id) }
 export function createHud(scene, io) {
   const tiersNow = () => (io.tiers && io.tiers()) || TIERS;
+  // build 4: GET /jobs (empty until it answers, and in replay: the job controls stay hidden); the agent sheet's job
+  // picker (per agent) and brain switch (one for all) keep their own state, so a poll never resets a choice
+  const jobsNow = () => (io.jobs && io.jobs()) || [];
+  const jobOf = (key) => jobsNow().find((j) => j.job === key);
+  const pick = {}, brainPick = {}; // user test: per agent (one global switch made an AI agent's START read scripted)
+  const brainFor = (id) => brainPick[id] || ((io.getState().agents[id] || {}).mode === 'model' ? 'model' : 'scripted');
+  // what START runs for this agent: the sheet's pick, else the job it was built with, else the best fit for its badge
+  function workChoice(id) {
+    const a = io.getState().agents[id] || {}, jobs = jobsNow();
+    const key = [pick[id], a.job].find((k) => k && jobs.some((j) => j.job === k)) || suggestJob(jobs, a.allowedTools || []);
+    return { job: key, brain: brainFor(id) };
+  }
+  const brainButtons = (attr, current, dis) => ['scripted', 'model'].map((b) => `<button type="button" data-${attr}="${b}" class="${b === current ? 'sel' : ''}"${dis} title="${b === 'model' ? 'Amazon Nova 2 Lite on Bedrock reads the job and does it, choosing each tool itself; the gateway checks every call either way' : 'the same steps every time: dependable on stage'}">${b === 'model' ? 'AI <small>Nova 2 Lite</small>' : 'SCRIPTED <small>same steps</small>'}</button>`).join('');
 
   // ---------- chips (the card and the agent sheet share them) ----------
   function chipsHtml(a, ui) {
@@ -179,7 +230,10 @@ export function createHud(scene, io) {
     setHtml($('tabs'), Object.values(state.agents).filter((x) => x.known).map((x) => `<button data-agent="${esc(x.id)}" class="${x.id === a.id ? 'sel' : ''}">${esc(x.name)}</button>`).join(''));
     $('c-name').textContent = a.name;
     setHtml($('c-tier'), tierHtml(a, ui));
-    $('c-sub').textContent = `client ${a.clientId || '—'}${a.mode === 'scripted' ? ' · scripted client' : a.mode === 'replay' ? ' · replay' : ''}`;
+    // build 5: the card names the brain and the job ("client 6vmk4mf8 · AI · Attack drill: leak the Q3 plan")
+    const jobName = runActive(a) && a.task ? a.task : (jobOf(workChoice(a.id).job) || {}).name;
+    $('c-sub').textContent = `client ${a.clientId || '—'}${a.mode === 'scripted' ? ' · scripted' : a.mode === 'model' ? ' · AI' : a.mode === 'replay' ? ' · replay' : ''}${jobName ? ` · ${jobName}` : ''}`;
+    $('c-sub').title = $('c-sub').textContent;
     const [pillText, pill] = statusPill(a);
     $('c-status').textContent = pillText;
     $('c-status').className = `status st-${pill}`;
@@ -203,6 +257,14 @@ export function createHud(scene, io) {
     for (const b of document.querySelectorAll('#ops button[data-act]')) {
       const act = b.dataset.act;
       if (act === 'save') { b.disabled = !state.log.length; continue; }
+      if (act === 'start') { // build 4: START the selected agent's job (hidden until GET /jobs answers)
+        const ss = startState(a, ui), row = b.closest('.act');
+        if (row) row.style.display = jobsNow().length ? '' : 'none';
+        b.disabled = !ss.ok; b.textContent = ss.sent ? 'sent...' : 'START';
+        const wc = workChoice(a.id), sub = $('o-start');
+        if (sub) sub.textContent = ss.ok ? `run its job: ${(jobOf(wc.job) || {}).name || 'patrol'} · ${wc.brain === 'model' ? 'AI' : 'scripted'}` : ss.why;
+        continue;
+      }
       b.disabled = ui.source === 'replay' || !!ui.pending[act];
       b.textContent = ui.pending[act] ? 'sent...' : BTN_WORD[act] || act.toUpperCase();
     }
@@ -220,8 +282,8 @@ export function createHud(scene, io) {
   function renderTicker(state, ui) {
     const last = state.log[state.log.length - 1];
     $('ticker').innerHTML = last
-      ? `<span class="seq">#${last.seq}</span><span class="line t-${last.decision === 'allow' ? 'allow' : last.decision === 'deny' ? 'deny' : 'admin'}">${esc(state.ticker)}</span>`
-      : `<span class="line">${ui.source === 'replay' ? 'loading the recording…' : 'waiting for the gateway…'}</span>`;
+      ? `${state.tickerLocal ? '' : `<span class="seq">#${last.seq}</span>`}<span class="line t-${state.tickerLocal ? 'deny' : last.decision === 'allow' ? 'allow' : last.decision === 'deny' ? 'deny' : 'admin'}">${esc(state.ticker)}</span>`
+      : `<span class="line">${ui.source === 'replay' ? 'loading the recording…' : io.lastGoodPoll && io.lastGoodPoll() ? 'a fresh chain: no calls yet' : 'waiting for the gateway…'}</span>`;
   }
   function renderTable(state) {
     $('t-body').innerHTML = state.log.map((e) => `<tr><td>${e.seq}</td><td title="${esc(e.ts)}">${esc(String(e.ts || '').slice(11, 23))}</td><td>${esc(e.agent)}</td><td>${esc(e.tool)}</td><td class="${esc(e.decision)}">${esc(e.decision)}</td><td>${esc(e.rule)}</td><td>${esc(e.reason)}</td><td>${e.latency_ms ?? ''}</td><td>${e.ms_since_revoke ?? ''}</td></tr>`).join('');
@@ -232,6 +294,7 @@ export function createHud(scene, io) {
   function openAgentSheet(id) { sheetAgent = id; $('a-raw').open = false; }
   function renderAgentSheet(state, ui) {
     const a = state.agents[sheetAgent]; if (!a || !$('agent').classList.contains('on')) return;
+    if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#agent select')) return; // a dropdown is open: never redraw under it
     const [pillText, pill] = statusPill(a);
     const note = cardNote(a), live = ui.source !== 'replay';
     const mine = state.log.filter((e) => e.agent === a.id);
@@ -239,6 +302,14 @@ export function createHud(scene, io) {
     const ceil = (tiersNow()[a.tier] || {}).ceiling || [];
     const rows = ALL_TOOLS.map((t) => `<tr><td>${esc(t)}</td><td>${esc(TO_DO[t])}</td><td>${a.allowedTools.includes(t) ? '<span class="good">on the badge</span>' : ceil.includes(t) ? '<span class="dim">not on the badge</span>' : `<span class="dim">above the tier (${esc(tierHint(t, tiersNow()))})</span>`}</td><td class="num">${count(t, 'allow')}</td><td class="num">${count(t, 'deny')}</td></tr>`).join('');
     const btn = (act, word, sub) => `<div class="act"><button data-act="${act}"${!live || ui.pending[act] ? ' disabled' : ''}>${ui.pending[act] ? 'sent...' : word}</button><span>${sub}</span></div>`;
+    // build 4: its job and START (the gateway starts the launcher, which owns the program; KILL stops it)
+    const jobs = jobsNow(), choice = workChoice(a.id), cur = jobOf(choice.job), ss = startState(a, ui);
+    const hint = cur ? jobHint(cur, a.allowedTools) : null, wdis = live ? '' : ' disabled';
+    const work = !jobs.length ? '' : `<div class="lbl">its job: what its program does when it runs</div>`
+      + `<div class="work"><select data-sjob="${esc(a.id)}"${wdis}>${jobs.map((j) => `<option value="${esc(j.job)}"${j.job === choice.job ? ' selected' : ''}>${esc(j.name)}</option>`).join('')}</select>`
+      + `<span class="brains">${brainButtons('brain', brainFor(a.id), wdis)}</span></div>`
+      + (cur ? `<div class="jobhint ${hint.bad ? 'bad' : 'dim'}">${esc(cur.line)} · ${esc(hint.text)}</div>` : '');
+    const startBtn = !jobs.length ? '' : `<div class="act"><button data-act="start"${ss.ok ? '' : ' disabled'}>${ss.sent ? 'sent...' : 'START'}</button><span>${esc(ss.why)}</span></div>`;
     setHtml($('a-body'), `<h3><span>${esc(a.name)} <span class="status st-${pill}">${esc(pillText)}</span></span><span class="dim">Esc closes</span></h3>`
       + `<div class="tierline">${tierHtml(a, ui)}</div>`
       + `<dl class="facts"><dt>role</dt><dd>${esc(a.role || 'no role written yet')}</dd>`
@@ -247,9 +318,10 @@ export function createHud(scene, io) {
       + `<dt>calls</dt><dd>allowed ${a.calls} · refused ${a.blocked}</dd>`
       + (note.lines.length ? `<dt>note</dt><dd class="${note.bad ? 'bad' : ''}">${note.lines.map(esc).join('<br>')}</dd>` : '')
       + `<dt>identity</dt><dd>client ${esc(a.clientId || '—')} · made by ${a.madeBy === 'factory' ? 'the Factory' : 'the seed (demo badge)'}</dd></dl>`
+      + work
+      + `<div class="acts${startBtn ? ' four' : ''}">${startBtn}${btn('revoke', 'REVOKE', 'take the badge away now')}${btn('restore', 'RESTORE', 'give the badge back')}${btn('kill', 'KILL', 'stop the running program')}</div>`
       + `<div class="lbl">the badge: click a tool to give it or take it away</div><div class="chips">${chipsHtml(a, ui)}</div>`
       + `<table class="verbs"><thead><tr><th>tool</th><th>what it does</th><th>this badge</th><th>allowed</th><th>refused</th></tr></thead><tbody>${rows}</tbody></table>`
-      + `<div class="acts">${btn('revoke', 'REVOKE', 'take the badge away now')}${btn('restore', 'RESTORE', 'give the badge back')}${btn('kill', 'KILL', 'stop the running program')}</div>`
       // a robot in the bay can be inspected again (the panel closes when another inspection starts or the card is wanted back)
       + (a.at === 'bay' ? `<div class="acts"><div class="act"><button data-ui="inspect">INSPECTION</button><span>show the inquest the bay ran on it</span></div></div>` : ''));
     const ev = [...state.log].reverse().find((x) => x.agent === a.id);
@@ -257,8 +329,32 @@ export function createHud(scene, io) {
     if ($('a-json').textContent !== raw) $('a-json').textContent = raw;
   }
 
+  // build 4: the sheet's job picker and brain switch (START itself is a data-act button main.js handles)
+  $('agent').addEventListener('change', (e) => {
+    const s = e.target.closest && e.target.closest('select[data-sjob]'); if (!s) return;
+    pick[s.dataset.sjob] = s.value; s.blur(); io.rerender?.();
+  });
+  $('agent').addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('button[data-brain]'); if (!b || b.disabled) return;
+    if (sheetAgent) brainPick[sheetAgent] = b.dataset.brain; io.rerender?.();
+  });
+
   // ---------- the Factory office sheet: the roster and the NEW AGENT form ----------
-  const form = { name: '', tier: 'gold', tools: null, color: 'teal', role: '', err: '', busy: false };
+  // build 4: job (suggested from the ticked tools until the operator picks one: jobTouched), brain, start on build
+  const form = { name: '', tier: 'gold', tools: null, color: 'teal', colorTouched: false, role: '', err: '', busy: false, job: '', jobTouched: false, brain: 'scripted', start: true };
+  const freeColor = () => { const used = new Set(Object.values(io.getState().agents).filter((x) => x.known).map((x) => x.color)); return Object.keys(ROBOT_COLORS).find((c) => !used.has(c)) || 'teal'; };
+  function formJob() {
+    const jobs = jobsNow(), tools = ALL_TOOLS.filter((t) => form.tools && form.tools.has(t));
+    if (!form.jobTouched || !jobs.some((j) => j.job === form.job)) form.job = suggestJob(jobs, tools);
+    const j = jobOf(form.job);
+    return { j, hint: j ? jobHint(j, tools) : null };
+  }
+  // the job line under the picker follows the ticks without redrawing the form (which would eat the typing)
+  function updateJobHint() {
+    const { j, hint } = formJob(), sel = $('f-job'), el = $('f-jobhint');
+    if (sel && sel.value !== form.job) sel.value = form.job;
+    if (el) { el.textContent = j ? `${j.line} · ${hint.text}` : ''; el.className = `jobhint ${hint && hint.bad ? 'bad' : 'dim'}`; }
+  }
   function renderOffice(state, ui) {
     if (!$('office').classList.contains('on')) return;
     const live = ui.source !== 'replay', tiers = tiersNow();
@@ -275,6 +371,7 @@ export function createHud(scene, io) {
   function drawForm(live) {
     const tiers = tiersNow(), ceil = (tiers[form.tier] || {}).ceiling || [];
     if (!form.tools) form.tools = new Set(ceil);
+    if (!form.colorTouched) form.color = freeColor();
     for (const t of [...form.tools]) if (!ceil.includes(t)) form.tools.delete(t);
     const dis = live && !form.busy ? '' : ' disabled';
     const el = $('f-form'); el._drawn = true; el._live = live;
@@ -287,7 +384,17 @@ export function createHud(scene, io) {
       }).join('')}</div>`
       + `<div class="lbl">colour</div><div class="swatches">${Object.entries(ROBOT_COLORS).map(([k, hex]) => `<button type="button" data-fcolor="${k}" class="${k === form.color ? 'sel' : ''}" style="background:${hex}" title="${k}"${dis}></button>`).join('')}<span class="dim" id="f-cname">${esc(form.color)}</span></div>`
       + `<label>role <input id="f-role" maxlength="60" value="${esc(form.role)}" placeholder="reads invoices and emails customers"${dis}></label>`
-      + `<div class="buildrow"><button type="button" id="f-build"${dis}>${form.busy ? 'sent...' : 'BUILD'}</button><span class="err" id="f-err">${esc(form.err)}</span></div>`;
+      + jobFields(dis)
+      // build 4: "start working as soon as it is built" sits beside BUILD (the form fits a 720 px screen with no scroll)
+      + `<div class="buildrow"><button type="button" id="f-build"${dis}>${form.busy ? 'sent...' : 'BUILD'}</button>${jobsNow().length ? `<label class="chk"><input type="checkbox" id="f-start"${form.start ? ' checked' : ''}${dis}> start working as soon as it is built</label>` : ''}<span class="err" id="f-err">${esc(form.err)}</span></div>`;
+  }
+  // build 4: the job, the brain and "start working as soon as it is built" (hidden when the gateway has no GET /jobs)
+  function jobFields(dis) {
+    const jobs = jobsNow(); if (!jobs.length) return '';
+    const { j, hint } = formJob();
+    return `<label>job: what it does once it is built <select id="f-job"${dis}>${jobs.map((x) => `<option value="${esc(x.job)}"${x.job === form.job ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>`
+      + `<div class="jobhint ${hint && hint.bad ? 'bad' : 'dim'}" id="f-jobhint">${j ? esc(`${j.line} · ${hint.text}`) : ''}</div>`
+      + `<div class="brainrow"><span class="lbl">brain</span><span class="brains">${brainButtons('fbrain', form.brain, dis)}</span><span class="dim">the gateway checks every call either way</span></div>`;
   }
   // the form's own clicks and typing (main.js calls io.mint(spec) on BUILD)
   function wireOffice() {
@@ -295,21 +402,26 @@ export function createHud(scene, io) {
     el.addEventListener('input', (e) => {
       if (e.target.id === 'f-name') { form.name = e.target.value; $('f-slug').textContent = `id: ${slugify(form.name) || '—'}`; }
       if (e.target.id === 'f-role') form.role = e.target.value;
-      if (e.target.dataset.ftool) { if (e.target.checked) form.tools.add(e.target.dataset.ftool); else form.tools.delete(e.target.dataset.ftool); }
+      if (e.target.dataset.ftool) { if (e.target.checked) form.tools.add(e.target.dataset.ftool); else form.tools.delete(e.target.dataset.ftool); updateJobHint(); }
+      if (e.target.id === 'f-job') { form.job = e.target.value; form.jobTouched = true; updateJobHint(); }
+      if (e.target.id === 'f-start') form.start = e.target.checked;
     });
     el.addEventListener('click', async (e) => {
       const b = e.target.closest('button'); if (!b || b.disabled) return;
       if (b.dataset.ftier) { form.tier = b.dataset.ftier; form.tools = null; drawForm(el._live); return; }
-      if (b.dataset.fcolor) { form.color = b.dataset.fcolor; for (const s of el.querySelectorAll('[data-fcolor]')) s.classList.toggle('sel', s === b); $('f-cname').textContent = form.color; return; }
+      if (b.dataset.fcolor) { form.color = b.dataset.fcolor; form.colorTouched = true; for (const s of el.querySelectorAll('[data-fcolor]')) s.classList.toggle('sel', s === b); $('f-cname').textContent = form.color; return; }
+      if (b.dataset.fbrain) { form.brain = b.dataset.fbrain; for (const s of el.querySelectorAll('[data-fbrain]')) s.classList.toggle('sel', s === b); return; }
       if (b.id === 'f-build') {
         const spec = { agent: slugify(form.name), name: form.name.trim(), tier: form.tier, tools: ALL_TOOLS.filter((t) => form.tools.has(t)), color: form.color, role: form.role.trim() };
+        if (jobsNow().length && form.job) spec.job = form.job;
         if (!spec.name) { form.err = 'Give the agent a name first.'; drawForm(el._live); return; }
+        if (!/^[a-z]/i.test(spec.name)) { form.err = 'The name must start with a letter.'; drawForm(el._live); return; }
         if (!/^[a-z][a-z0-9-]{2,23}$/.test(spec.agent)) { form.err = 'The name needs at least three letters or digits, starting with a letter.'; drawForm(el._live); return; }
         if (!spec.tools.length) { form.err = 'Tick at least one tool.'; drawForm(el._live); return; }
         form.busy = true; form.err = ''; drawForm(el._live);
-        const r = await io.mint(spec);
+        const r = await io.mint(spec, { start: !!spec.job && form.start, brain: form.brain });
         form.busy = false;
-        if (r && r.ok) { form.name = ''; form.role = ''; form.tools = null; form.err = ''; } else form.err = (r && r.error) || 'The gateway did not answer.';
+        if (r && r.ok) { form.name = ''; form.role = ''; form.tools = null; form.err = ''; form.job = ''; form.jobTouched = false; form.colorTouched = false; } else form.err = (r && r.error) || 'The gateway did not answer.';
         drawForm(el._live);
       }
     });
@@ -333,17 +445,29 @@ export function createHud(scene, io) {
     const now = Date.now(), lastGood = io.lastGoodPoll();
     const m = badge({ source: io.source, now, lastGoodPoll: lastGood, staleAfterMs: io.staleAfterMs });
     const el = $('mode'); el.className = `hud paper ${m}`;
-    const sub = m === 'REPLAY' ? `recorded ${io.recordedOn() || '—'}` : m === 'LIVE' ? 'gateway answering' : lastGood ? `no answer for ${Math.round((now - lastGood) / 1000)} s` : 'no gateway yet';
+    const sub = m === 'REPLAY' ? `${io.recordedOn() || 'a recording'} · R or click: LIVE` : m === 'LIVE' ? 'gateway answering' : lastGood ? `no answer for ${Math.round((now - lastGood) / 1000)} s` : 'no gateway yet';
     // LIVE · model or LIVE · scripted: who drives the selected agent's calls, from its last event's agent_mode
     const sel = io.getState().agents[io.selected()];
     el.innerHTML = `${esc(badgeText(m, sel && sel.mode))}<small>${esc(sub)}</small>`;
   }
 
+  // ---------- the refusal toast (user test: the 429 / 403 / 409 sentences were overwritten by event banners) ----------
+  let toastTimer = null;
+  function toast(text) {
+    const t = $('toast'); if (!t) return banner(text, 'bad');
+    t.textContent = text; t.classList.add('on');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), Math.max(4000, Math.min(9000, String(text).length * 70)));
+    return Promise.resolve();
+  }
+
   // ---------- the banner (2 s) ----------
   function banner(text, tone) {
-    const b = $('banner'); b.textContent = text; b.className = `hud paper on ${tone}`;
+    // re-test: anything past 24 characters wraps at a smaller size ("LEAK BLOCKED partner@rival.example" was cut), and a routine
+    // green or grey banner gives way sooner, so a security banner queued behind it is seen at once
+    const long = String(text).length > 24;
+    const b = $('banner'); b.textContent = text; b.className = `hud paper on ${tone}${long ? ' long' : ''}`;
     panelsAt = 0; // the banner counts as a panel while it shows: labels under it step aside (see offPanels)
-    return sleep(2000).then(() => { if (b.textContent === text) { b.classList.remove('on'); panelsAt = 0; } });
+    return sleep(long ? 4000 : tone === 'good' || tone === 'muted' ? 1400 : 2000).then(() => { if (b.textContent === text) { b.classList.remove('on'); panelsAt = 0; } });
   }
   // a locked chip that was clicked shakes for 0.3 s (on the card and in the agent sheet)
   function shakeChip(tool) {
@@ -513,6 +637,7 @@ export function createHud(scene, io) {
   }
   const relayout = () => { panelsAt = 0; };
 
-  return { render, renderBadge, renderTable, follow, stampAt, idCard, banner, setGatewayStrip, shakeChip, showInquest, refreshInquest, closeInquest, openAgentSheet, openOffice, relayout, inquestOpen: () => (inq ? inq.id : null) };
+  return { render, renderBadge, renderTable, follow, stampAt, idCard, banner, setGatewayStrip, shakeChip, showInquest, refreshInquest, closeInquest, openAgentSheet, openOffice, relayout, inquestOpen: () => (inq ? inq.id : null),
+    workChoice, jobsChanged: () => { $('f-form')._drawn = false; }, sheetAgent: () => sheetAgent, toast }; // build 4/5
 }
 export { TIER_ORDER };

@@ -1,5 +1,5 @@
 """The gateway's Starlette app: POST /mcp, the control API the island and the launcher use (badges, the Factory, tiers,
-the inquest), /config.js and the static face. create_app(settings) builds it; the module-level `app` (for `python -m uvicorn gateway.app:app`) is built from gateway/.env on first access."""
+jobs, starting an agent, the inquest), /config.js and the static face. create_app(settings) builds it; the module-level `app` (for `python -m uvicorn gateway.app:app`) is built from gateway/.env on first access."""
 
 import hmac
 import json
@@ -27,8 +27,10 @@ from gateway.console import disable_quick_edit
 from gateway.events import DynamoEventLog, MemoryEventLog
 from gateway.factory import TOOL_ACTIONS, Factory, FactoryError, public_row
 from gateway.identity import CognitoIdentity, LocalIdentity
+from gateway.jobs import DEFAULT_JOB, is_job, job_error, public_jobs
 from gateway.mcp import MAX_LABEL_CHARS, TOOL_NAMES, McpHandler
 from gateway.registry import DynamoRegistry, MemoryRegistry, RegistryUnavailable, now_iso
+from gateway.runner import BRAINS, Runner, RunnerError, missing_config, open_run, process_born
 from gateway.stats import summarize
 from gateway.tiers import public_tiers
 from gateway.tokens import CognitoVerifier, LocalVerifier, TokenError
@@ -104,12 +106,40 @@ def static_dir(settings: Settings) -> Path | None:
     return None  # never serve gateway/ itself: it holds .env
 
 
+def launcher_url(request: Request) -> str | None:
+    """The gateway URL for a launcher started by this request: loopback and the port this connection actually reached
+    on the listening socket (scope["server"]), never the Host header, which any local client can write (a forged port
+    would send the admin token and the agent's bearer token to another program). None when the server address is
+    unknown: the launcher then takes GATEWAY_URL from its env file."""
+    server = request.scope.get("server")
+    if not server or not isinstance(server[1], int):
+        return None
+    host = "[::1]" if ":" in str(server[0]) else "127.0.0.1"   # the loopback of the family the gateway listens on
+    return f"http://{host}:{server[1]}"
+
+
+def close_killed_run(handler: McpHandler, agent: str, run_id: str | None, why: str) -> dict | None:
+    """Log run_stopped for a run whose launcher the runner killed (shutdown, retire, reset). A killed launcher never
+    reaches its own POST /runs/{id}/stopped, and without this row a resumed chain would show the robot working
+    forever. Once per run, only for a run the gateway saw start, and never "killed by harness" (that would send the
+    robot to the inspection bay): the island reads it as a run that ended."""
+    run = handler.runs.get(run_id or "")
+    if run is None or run.get("stopped"):
+        return None
+    run["stopped"] = True
+    return handler.log(run_id=run_id, agent=str(run.get("agent") or agent), agent_mode=run.get("agent_mode", "model"),
+                       tool="harness", args_summary=f"pid={run.get('pid')} stopped by the gateway"[:80],
+                       decision="run_stopped", rule="harness", reason=f"stopped by the gateway: {why}",
+                       latency_ms=0)
+
+
 def create_app(settings: Settings) -> Starlette:
     """Build the whole gateway for these settings."""
     session = aws_session(settings) if needs_aws(settings) else None
     handler = build_handler(settings, session)
     registry, events = handler.registry, handler.events
     factory = Factory(settings, handler, build_identity(settings, session))
+    runner = Runner(settings)   # the launchers POST /agents/{id}/start spawned; stopped on retire, reset and shutdown
     if settings.admin_token in DEFAULT_SECRETS:
         print("gateway: WARNING ADMIN_TOKEN is the default value; set a random one in gateway/.env and agent/.env",
               file=sys.stderr)
@@ -145,10 +175,13 @@ def create_app(settings: Settings) -> Starlette:
             rows = await run_in_threadpool(registry.list_agents)
         except RegistryUnavailable:
             return unavailable()
-        return JSONResponse([public_row(row) for row in rows])
+        return JSONResponse([public_row(row, runner.running(row["agent"])) for row in rows])
 
     async def get_tiers(request: Request) -> Response:
         return JSONResponse(public_tiers())
+
+    async def get_jobs(request: Request) -> Response:
+        return JSONResponse(public_jobs())
 
     async def known(agent: str) -> bool:
         """Is there a badge row for this agent? (A registry read; RegistryUnavailable propagates.)"""
@@ -177,7 +210,60 @@ def create_app(settings: Settings) -> Starlette:
     async def retire(request: Request) -> Response:
         if not is_admin(request):
             return unauthorized()
-        return await factory_call(factory.retire, request.path_params["agent_id"])
+        agent = request.path_params["agent_id"]
+        try:
+            row = await run_in_threadpool(registry.get, agent)
+        except RegistryUnavailable:
+            return unavailable()
+        # the launcher goes first, so nothing runs on a deleted identity, and its run is logged as stopped before
+        # `retired`; a retire refused for a seed agent stops nothing
+        if row is None or row.get("made_by") == "factory":
+            run_id = await run_in_threadpool(runner.stop, agent)
+            await run_in_threadpool(close_killed_run, handler, agent, run_id, "retire")
+        return await factory_call(factory.retire, agent)
+
+    async def start_agent(request: Request) -> Response:
+        """POST /agents/{id}/start {"job"?, "brain"?}: the runner starts launcher/run.py for this agent; 202 with the
+        launcher's pid and log. It logs no event: the launcher's run_started is what the island draws from."""
+        if not is_admin(request):
+            return unauthorized()
+        generation = runner.generation  # read before the first await: a RESET that begins after this refuses the spawn
+        agent, body = request.path_params["agent_id"], await read_json(request)
+        try:
+            row = await run_in_threadpool(registry.get, agent)
+        except RegistryUnavailable:
+            return unavailable()
+        if row is None:
+            return JSONResponse({"error": f"unknown agent {agent[:MAX_LABEL_CHARS]}"}, status_code=404)
+        job = body.get("job") or row.get("job") or DEFAULT_JOB
+        if not is_job(job):
+            return JSONResponse({"error": job_error()}, status_code=400)
+        brain = body.get("brain") or "scripted"
+        if not isinstance(brain, str) or brain not in BRAINS:
+            return JSONResponse({"error": "brain must be scripted or model"}, status_code=400)
+        name = str(row.get("name") or agent)
+
+        def conflict(sentence: str) -> JSONResponse:
+            return JSONResponse({"error": sentence}, status_code=409)
+
+        if row.get("status") != "ACTIVE":
+            return conflict(f"{name} is {row.get('status')}: press RESTORE first")
+        pid = runner.pid(agent)
+        if pid is not None:
+            return conflict(f"{name} is already working (launcher pid {pid})")
+        elsewhere = open_run(handler.runs, agent)
+        if elsewhere is not None:
+            run_id, run = elsewhere
+            return conflict(f"{name} is already working (run {run_id}, agent pid {run.get('pid')}, "
+                            f"started outside the Factory)")
+        problem = await run_in_threadpool(missing_config, settings, agent, brain)
+        if problem is not None:
+            return conflict(problem)
+        try:
+            started = await run_in_threadpool(runner.start, agent, job, brain, launcher_url(request), name, generation)
+        except RunnerError as exc:
+            return JSONResponse(exc.body, status_code=exc.status)
+        return JSONResponse(started, status_code=202)
 
     async def inquest(request: Request) -> Response:
         return await factory_call(factory.inquest, request.path_params["agent_id"])
@@ -213,8 +299,14 @@ def create_app(settings: Settings) -> Starlette:
             return JSONResponse({"error": "unknown agent or action"}, status_code=404)
         status, decision, reason = ADMIN_ACTIONS[action]
         try:
-            if not await known(agent):
+            current = await run_in_threadpool(registry.get, agent)
+            if current is None:
                 return JSONResponse({"error": "unknown agent or action"}, status_code=404)
+            if current.get("status") == status:  # a repeat click: the badge already says so
+                if status == "ACTIVE":
+                    handler.note_restored(agent)  # RESTORE still clears the refusal count, as it always has
+                return JSONResponse({"status": status, "seq": None, "changed": False,
+                                     "note": f"{agent} is already {status}; nothing changed, nothing logged"})
             row = await run_in_threadpool(registry.set_status, agent, status, "operator")
         except RegistryUnavailable:
             return unavailable()
@@ -226,7 +318,7 @@ def create_app(settings: Settings) -> Starlette:
         event = await run_in_threadpool(
             handler.log, run_id=run_id, agent=agent, agent_mode=handler.agent_mode(run_id), tool="admin",
             args_summary="by=operator", decision=decision, rule="admin", reason=reason, latency_ms=0)
-        return JSONResponse({"status": status, "seq": event["seq"]})
+        return JSONResponse({"status": status, "seq": event["seq"], "changed": True})
 
     async def tool_action(request: Request) -> Response:
         """POST /agents/{id}/tools/{tool}/revoke|restore: take one tool off the badge, put it back, or grant it.
@@ -283,7 +375,8 @@ def create_app(settings: Settings) -> Starlette:
             return JSONResponse({"error": "expires_in must be a whole number of seconds"}, status_code=400)
         # agent_mode lands in every later record of this run: always a short string, whatever the body held
         run = {"agent": agent, "agent_mode": str(body.get("agent_mode") or "model")[:MAX_LABEL_CHARS],
-               "pid": body.get("pid"), "task": body.get("task", "")}
+               "pid": body.get("pid"), "task": body.get("task", ""),
+               "born": process_born(body.get("pid"))}  # build 4: a reused pid is told apart by its create time
         handler.runs[run_id] = run
         handler.note_run_started(agent)  # refusals from an earlier run never count toward this run's quarantine
         client = str(body.get("client_id") or "")[:8]
@@ -304,32 +397,46 @@ def create_app(settings: Settings) -> Starlette:
             return unauthorized()
         run_id, body = request.path_params["run_id"], await read_json(request)
         run = handler.runs.get(run_id, {})
+        if run_id in handler.runs:
+            run["stopped"] = True  # POST /agents/{id}/start may start this agent again
         how = str(body.get("how", "exited"))
         if isinstance(body.get("kill_ms"), int):  # the launcher's own kill-to-gone time; memory only, not in the record
             handler.last_kill_ms = body["kill_ms"]
+        reason = f"exit {body.get('exit_code')} ({how})"
+        summary = str(body.get("summary") or "").strip()
+        if summary:  # the agent's last words (a JOB DONE line, or the AI's reply): the island shows them on RUN ENDED
+            reason = f"{reason} · {summary}"
         event = await run_in_threadpool(
             handler.log, run_id=run_id, agent=str(run.get("agent", body.get("agent", "unknown")))[:MAX_LABEL_CHARS],
             agent_mode=run.get("agent_mode", "model"), tool="harness",
             args_summary=f"pid={run.get('pid', body.get('pid'))} {how}"[:80], decision="run_stopped",
-            rule="harness", reason=f"exit {body.get('exit_code')} ({how})", latency_ms=0)
+            rule="harness", reason=reason[:240], latency_ms=0)
         return JSONResponse(event)
 
     async def demo_reset(request: Request) -> Response:
         if not is_admin(request):
             return unauthorized()
-        await run_in_threadpool(factory.retire_all)  # best effort: identities, map entries and env lines
+        runner.begin_reset()  # first: no START spawns from here until end_reset, not even one already past its checks
         try:
-            await run_in_threadpool(registry.reset)  # seed badges with their tiers; any Factory row left is dropped
-        except RegistryUnavailable:
-            return unavailable()
-        handler.clear()
-        try:
-            await run_in_threadpool(handler.refresh_agents)  # client ids may have changed (re-provisioning)
-        except RegistryUnavailable:
-            pass  # the map keeps its old entries; a miss looks the client up again
-        if settings.mode == "aws":  # a reset is followed by a launch: have the connections ready for the first calls
-            threading.Thread(target=warm.warm_connections, args=(handler,), name="reset-warm", daemon=True).start()
-        return JSONResponse({"ok": True, "chain": events.reset()})
+            # no launcher keeps working into the new chain; each killed run is logged as stopped, so a reset that
+            # fails below with 503 still leaves a chain that matches what runs
+            for agent, run_id in await run_in_threadpool(runner.stop_all):
+                await run_in_threadpool(close_killed_run, handler, agent, run_id, "reset")
+            await run_in_threadpool(factory.retire_all)  # best effort: identities, map entries and env lines
+            try:
+                await run_in_threadpool(registry.reset)  # seed badges with their tiers; any Factory row left is dropped
+            except RegistryUnavailable:
+                return unavailable()
+            handler.clear()
+            try:
+                await run_in_threadpool(handler.refresh_agents)  # client ids may have changed (re-provisioning)
+            except RegistryUnavailable:
+                pass  # the map keeps its old entries; a miss looks the client up again
+            if settings.mode == "aws":  # a reset is followed by a launch: have the connections ready for the first calls
+                threading.Thread(target=warm.warm_connections, args=(handler,), name="reset-warm", daemon=True).start()
+            return JSONResponse({"ok": True, "chain": events.reset()})
+        finally:
+            runner.end_reset()
 
     async def demo_replay(request: Request) -> Response:
         if not is_admin(request):
@@ -366,10 +473,12 @@ def create_app(settings: Settings) -> Starlette:
         Route("/agents", get_agents, methods=["GET"]),
         Route("/agents", mint, methods=["POST"]),
         Route("/tiers", get_tiers, methods=["GET"]),
+        Route("/jobs", get_jobs, methods=["GET"]),
         Route("/agents/{agent_id}/status", get_status, methods=["GET"]),
         Route("/agents/{agent_id}/inquest", inquest, methods=["GET"]),
         Route("/agents/{agent_id}/tier", change_tier, methods=["POST"]),
         Route("/agents/{agent_id}/retire", retire, methods=["POST"]),
+        Route("/agents/{agent_id}/start", start_agent, methods=["POST"]),   # before the generic {action} route
         Route("/agents/{agent_id}/{action}", admin_action, methods=["POST"]),
         Route("/agents/{agent_id}/tools/{tool}/{action}", tool_action, methods=["POST"]),
         Route("/runs/{run_id}/started", run_started, methods=["POST"]),
@@ -392,20 +501,25 @@ def create_app(settings: Settings) -> Starlette:
     middleware = [Middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS),
                   Middleware(CORSMiddleware, allow_origin_regex=LOCALHOST_ORIGINS, allow_methods=["*"],
                              allow_headers=["*"], expose_headers=["WWW-Authenticate"])]
-    app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan_for(settings, handler, session))
+    app = Starlette(routes=routes, middleware=middleware, lifespan=lifespan_for(settings, handler, session, runner))
     app.state.handler = handler
     app.state.factory = factory
+    app.state.runner = runner
     return app
 
 
-def lifespan_for(settings: Settings, handler: McpHandler, session: Any) -> Any:
+def lifespan_for(settings: Settings, handler: McpHandler, session: Any, runner: Runner | None = None) -> Any:
     """Startup: in AWS mode, warm up and keep warm on background threads (startup is not blocked).
-    Shutdown: give the durable-copy writer up to 5 s to drain its queue."""
+    Shutdown: stop the launchers the runner started and log their runs as stopped, then give the durable-copy writer
+    up to 5 s to drain its queue."""
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         stop = warm.start(handler, session) if settings.mode == "aws" else None
         yield
+        if runner is not None:  # no agent outlives the gateway that started it, and the chain says so before the flush
+            for agent, run_id in await run_in_threadpool(runner.stop_all):
+                await run_in_threadpool(close_killed_run, handler, agent, run_id, "shutdown")
         if stop is not None:
             stop.set()
         if not await run_in_threadpool(handler.events.flush, SHUTDOWN_FLUSH_S):

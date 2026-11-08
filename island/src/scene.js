@@ -39,7 +39,15 @@ export async function createScene(stage, hooksIn = {}) {
   let framing = framingFor();
   stage.setObject(W.world, { target: framing.target, radius: framing.radius });
   const ctl = stage._controls;
-  ctl.enablePan = false; ctl.minZoom = L.FRAMING.minZoom; ctl.maxZoom = L.FRAMING.maxZoom;
+  // Build 4: the island camera. Left drag turns it, the wheel zooms, and only a held MIDDLE button (the wheel pressed
+  // down) slides it sideways over the ground; the right button does nothing. recenter() (key C) puts the framing back.
+  // Rooms keep their own rules (rooms.js saves these and turns panning off inside).
+  const islandControls = () => {
+    ctl.enablePan = true; ctl.screenSpacePanning = false; // pan along the ground plane, like dragging a map
+    ctl.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: null };
+    ctl.minZoom = L.FRAMING.minZoom; ctl.maxZoom = L.FRAMING.maxZoom;
+  };
+  islandControls();
 
   // the sky (v1): pale blue at the top to warm paper at the horizon
   const sky = document.createElement('canvas'); sky.width = 96; sky.height = 256;
@@ -157,9 +165,20 @@ export async function createScene(stage, hooksIn = {}) {
 
   // ---------- rooms: enter / leave (the world is hidden while one is open, the camera saved and restored) ----------
   let current = null;
+  // build 4: the look-at point may wander only over the archipelago (islets at x -29..29, the Factory to z 34), never
+  // the open sea; a middle-drag past the edge stops there (registered here, after `current` exists)
+  const PAN_BOX = { x0: -30, x1: 30, z0: -24, z1: 36 };
+  ctl.addEventListener('change', () => {
+    if (current) return; // a room owns the camera
+    const t = ctl.target;
+    const x = Math.min(PAN_BOX.x1, Math.max(PAN_BOX.x0, t.x)), z = Math.min(PAN_BOX.z1, Math.max(PAN_BOX.z0, t.z));
+    if (x === t.x && z === t.z) return;
+    cam.position.x += x - t.x; cam.position.z += z - t.z; t.x = x; t.z = z;
+  });
   function enterRoom(key) {
     if (!ROOM_KEYS.includes(key)) return false;
     if (current === key) return true;
+    { const damp = ctl.enableDamping; ctl.enableDamping = false; ctl.update(); ctl.enableDamping = damp; } // build 4 (review): spend the island's glide first
     if (rooms) {
       if (current) { try { rooms.leave(); } catch (e) { console.error('scene: rooms.leave failed', e); } }
       try { rooms.enter(key); } catch (e) { console.error('scene: rooms.enter failed', e); W.world.visible = true; current = null; return false; }
@@ -173,6 +192,7 @@ export async function createScene(stage, hooksIn = {}) {
   }
   function leaveRoom() {
     if (!current) return;
+    { const damp = ctl.enableDamping; ctl.enableDamping = false; ctl.update(); ctl.enableDamping = damp; } // user test: a room's leftover turn stays in the room
     if (rooms) {
       try { rooms.leave(); } catch (e) { console.error('scene: rooms.leave failed', e); }
       if (rooms.group) rooms.group.visible = false;
@@ -185,7 +205,16 @@ export async function createScene(stage, hooksIn = {}) {
     if (current) return; // a room owns the camera; leaving it restores the island's, and the next resize reframes
     const f = framingFor(); if (f === framing) return;
     framing = f; stage.setObject(W.world, { target: f.target, radius: f.radius });
-    ctl.enablePan = false; ctl.minZoom = L.FRAMING.minZoom; ctl.maxZoom = L.FRAMING.maxZoom;
+    islandControls();
+  }
+  // key C: the opening view again (target, distance, angle, zoom), after any pan, turn or zoom; inside a room, nothing
+  function recenter() {
+    if (current) return false;
+    // the controls glide on after a drag (damping): spend that leftover turn/slide first, or it carries the fresh view off
+    const damp = ctl.enableDamping; ctl.enableDamping = false; ctl.update(); ctl.enableDamping = damp;
+    framing = framingFor(); stage.setObject(W.world, { target: framing.target, radius: framing.radius });
+    islandControls();
+    return true;
   }
   addEventListener('resize', () => { try { reframe(); } catch (e) { console.error('scene: reframe failed', e); } });
 
@@ -257,6 +286,8 @@ export async function createScene(stage, hooksIn = {}) {
     toScreen,
     places: () => Object.keys(places),
     labels: () => LABELS,
+    // the camera (build 4): key C
+    recenter,
     // the interiors
     enterRoom, leaveRoom, roomKey: () => current, rooms: () => rooms,
     pickBuilding,

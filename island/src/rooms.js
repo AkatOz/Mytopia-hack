@@ -45,7 +45,7 @@ export function normRoster(roster) {
 export const LEDGER_ROWS = 12;
 export const LEDGER_TEX = { w: 2048, h: 1048, pad: 30 };
 const DECISION = { allow: 'ALLOW', deny: 'DENY', revoked: 'REVOKED', restored: 'RESTORED', kill_requested: 'KILL', run_started: 'START', run_stopped: 'STOP', created: 'CREATED', tier_changed: 'TIER', retired: 'RETIRED' };
-const RULE = { 'status-revoked': 'revoked', 'status-killed': 'killed', 'registry-unavailable': 'registry', 'header-mismatch': 'header' };
+const RULE = { egress: 'outside', 'status-revoked': 'revoked', 'status-killed': 'killed', 'registry-unavailable': 'registry', 'header-mismatch': 'header' };
 const toneOf = (e) => (e.decision === 'allow' ? 'ok' : e.decision === 'deny' ? 'bad' : e.rule === 'harness' || e.tool === 'harness' ? 'dim' : 'admin');
 // column starts as a fraction of the inner width (measured: 52 px VT323 is 20.8 px a character; every column fits its
 // longest value: #123 · 21:40:03.060 · research · RESTORED · search_files · allow-list · 1234 · 1840 ms)

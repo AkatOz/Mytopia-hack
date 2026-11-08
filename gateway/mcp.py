@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse, Response
 
 from gateway.config import Settings
 from gateway.console import decision_logger
-from gateway.decide import Decision, decide
+from gateway.decide import MAX_LABEL_CHARS, Decision, address_label, decide
 from gateway.events import MemoryEventLog
 from gateway.registry import Registry, RegistryUnavailable
 from gateway.tokens import TokenError, TokenInfo, TokenVerifier
@@ -24,7 +24,7 @@ DEFAULT_PROTOCOL_VERSION = "2025-11-25"
 TOOL_NAMES = ("read_file", "search_files", "create_issue", "list_issues", "send_email", "delete_file")
 WWW_AUTHENTICATE = {"WWW-Authenticate": 'Bearer error="invalid_token"'}
 MAX_BODY_BYTES = 1_000_000   # one JSON-RPC request; anything bigger is refused before the token is even read
-MAX_LABEL_CHARS = 64         # caller-chosen text (X-Run-Id, Mcp-Name) is cut to this before it reaches the log
+# MAX_LABEL_CHARS (64, from gateway.decide): caller-chosen text (X-Run-Id, Mcp-Name) is cut to it before the log
 LOOKUP_EVERY_S = 30.0        # an unknown client id may cost a registry lookup at most this often (no read flood)
 NOT_REGISTERED = "client is not a registered agent"
 
@@ -294,7 +294,8 @@ class McpHandler:
                 return await self._registry_denied("tools/call", msg_id, run_id, name, agent, started)
             if row is None:
                 return await self._token_denied(TokenError(NOT_REGISTERED, token.client_id), msg_id, run_id, name, started)
-            decision = decide(row, name)
+            # the egress check (send_email only) is pure and runs inside decide(), after the read: still ONE read
+            decision = decide(row, name, arguments, self.settings.email_domains)
         if decision.rule == "status-revoked":
             decision.reason += f" (token: signature OK, expires in {token.expires_in()} s)"
         latency = elapsed_ms(started)
@@ -308,9 +309,14 @@ class McpHandler:
         result = await run_in_threadpool(self.tools.invoke, name, arguments) if decision.ok else denied_result(decision)
         # _meta is the MCP result's spec-legal extension field: the agent prints the gateway's own decision time
         result = {**result, "_meta": {"mytopia/latency_ms": latency, "mytopia/seq": record["seq"]}}
-        # a badge refusal of one of the six tools counts toward quarantine (never a status, token or gatehouse deny,
-        # and never a tool the operator pulled: the operator already acted on that one)
-        if (not decision.ok and decision.rule == "allow-list" and record["tool"] in TOOL_NAMES
+        # a recipient outside the company: the attempt to send company data outside pulls the badge at once (the
+        # agent still gets its deny, below)
+        if not decision.ok and decision.leak:
+            await self._quarantine_egress(agent, run_id, address_label(arguments.get("to"), self.settings.email_domains))
+        # a badge refusal of one of the six tools, or an egress refusal of a `to` that is not a valid company address
+        # (nothing outside), counts toward quarantine (never a status, token or gatehouse deny, and never a tool the
+        # operator pulled: the operator already acted on that one)
+        elif (not decision.ok and decision.rule in ("allow-list", "egress") and record["tool"] in TOOL_NAMES
                 and (agent, name) not in self.pulled):
             tripped = self.count_refusal(agent)
             if tripped is not None:
@@ -318,11 +324,12 @@ class McpHandler:
         await self._pace(started)
         return rpc_result(msg_id, result)
 
-    # ----- quarantine: the gateway pulls the badge itself after repeated refusals -----
+    # ----- quarantine: the gateway pulls the badge itself after repeated refusals, or at once after an egress try -----
     def count_refusal(self, agent: str) -> tuple[int, float] | None:
-        """Note one allow-list refusal. When it is the QUARANTINE_AFTER-th inside QUARANTINE_WINDOW_S, clear the count
-        and return (refusals, seconds from the first to this one); else None. Runs on the event loop with no await,
-        so two concurrent refusals can never both trip it."""
+        """Note one counted refusal (allow-list, or egress for a `to` that is not a valid company address). When it is
+        the QUARANTINE_AFTER-th inside QUARANTINE_WINDOW_S, clear the count and return (refusals, seconds from the
+        first to this one); else None. Runs on the event loop with no await, so two concurrent refusals can never
+        both trip it."""
         after, window = self.settings.quarantine_after, self.settings.quarantine_window_s
         if after <= 0:
             return None
@@ -335,11 +342,25 @@ class McpHandler:
         return len(recent), now - recent[0]
 
     async def _quarantine(self, agent: str, run_id: str, count: int, span_s: float) -> None:
+        """The counting quarantine: QUARANTINE_AFTER counted refusals inside QUARANTINE_WINDOW_S pull the badge."""
+        secs = round(span_s)
+        await self._pull_badge(agent, run_id, f"quarantine: {count} refused calls in {secs} s",
+                               f"badge pulled by quarantine after {count} refused calls in {secs} s",
+                               f"after {count} refused calls in {secs} s")
+
+    async def _quarantine_egress(self, agent: str, run_id: str, to: str) -> None:
+        """The egress quarantine: ONE refused send_email with a recipient outside the company pulls the badge at once
+        (QUARANTINE_AFTER does not apply: an attempt to send company data outside is never a typo to count; a `to`
+        that is merely malformed is a counted refusal instead)."""
+        why = f"after an attempt to send company data outside ({to})"
+        await self._pull_badge(agent, run_id, "quarantine: 1 refused call (egress)",
+                               f"badge pulled by quarantine {why}", why)
+
+    async def _pull_badge(self, agent: str, run_id: str, summary: str, reason: str, why: str) -> None:
         """Set the badge REVOKED by "quarantine" and log a revoked event. One conditional UpdateItem (a write, only if the
         badge is still ACTIVE, so it never overwrites an operator's KILL or REVOKE); the refused call itself still had
         exactly one badge read. It starts no revoke clock: the first deny after it would measure the agent's own
         pacing, not the gateway, so it carries no ms_since_revoke."""
-        secs = round(span_s)
         try:
             await run_in_threadpool(self.registry.set_status, agent, "REVOKED", "quarantine", "ACTIVE")
         except RegistryUnavailable as exc:
@@ -349,9 +370,8 @@ class McpHandler:
         self.drop_tool_clocks(agent)
         await run_in_threadpool(
             self.log, run_id=run_id, agent=agent, agent_mode=self.agent_mode(run_id), tool="admin",
-            args_summary=f"quarantine: {count} refused calls in {secs} s", decision="revoked", rule="admin",
-            reason=f"badge pulled by quarantine after {count} refused calls in {secs} s", latency_ms=0)
-        self._decision_log.info(f"QUARANTINE {agent} after {count} refused calls in {secs} s")
+            args_summary=summary, decision="revoked", rule="admin", reason=reason, latency_ms=0)
+        self._decision_log.info(f"QUARANTINE {agent} {why}")
 
     async def _pace(self, started: float) -> None:
         """DEMO_PACE is a floor on the whole call, not an extra sleep: a 190 ms call with pace 2.0 answers at 2.0 s."""

@@ -22,12 +22,14 @@ from starlette.routing import Route
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from launcher.run import EMPTY_INI, child_env, rotation_interval  # noqa: E402
+from launcher.run import (  # noqa: E402
+    EMPTY_INI, MAX_SUMMARY_CHARS, OutputReader, child_env, clean_summary, exit_reason, killed_meanwhile,
+    rotation_interval)
 
 SECRET = "test-secret-at-least-32-bytes-long!"
 ADMIN = "test-admin"
 ALLOWED_CHILD_KEYS = {"MYTOPIA_TOKEN", "MYTOPIA_TOKEN_FILE", "AGENT_POLL_WITH_MODEL", "AGENT_PATROL", "AGENT_NAME",
-                      "RUN_ID", "AGENT_ID", "AGENT_MODE",
+                      "AGENT_JOB", "RUN_ID", "AGENT_ID", "AGENT_MODE",
                       "GATEWAY_URL", "TASK_FILE", "AWS_BEARER_TOKEN_BEDROCK", "BEDROCK_MODEL_ID", "AWS_REGION",
                       "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "PYTHONIOENCODING", "PYTHONUNBUFFERED",
                       "PATH", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "COMSPEC", "PATHEXT"}
@@ -255,3 +257,40 @@ def test_token_rotation_with_short_ttl(tmp_path: Path) -> None:
         assert "invalid_token" not in text and "TOKEN EXPIRED" not in text and "ERROR" not in text
         assert first_token not in text and rotated not in text  # never print a whole token
         assert not token_file.exists()
+
+
+# ----- build 5 (A4): the launcher keeps the run's last words and maps the exit -----
+def test_output_reader_echoes_every_line_and_keeps_the_last_words(capsys: pytest.CaptureFixture) -> None:
+    lines = ["tools/list: 4 tools\n", "ALLOW read_file\n", "AGENT: I read the plan.\n",
+             "JOB DONE: Research the Q3 plan \u00b7 3 allowed, 1 refused\n"]
+    reader = OutputReader(iter(lines))
+    assert reader.summary(prefer_agent=True) == "AGENT: I read the plan."  # the AI brain prefers the model's reply
+    assert reader.summary(prefer_agent=False) == "JOB DONE: Research the Q3 plan \u00b7 3 allowed, 1 refused"
+    out = capsys.readouterr().out
+    assert "ALLOW read_file" in out and "AGENT: I read the plan." in out  # the log keeps every line
+
+
+def test_output_reader_summary_is_empty_without_last_words() -> None:
+    reader = OutputReader(iter(["ALLOW read_file\n", "DENY send_email: ... [rule: allow-list]\n"]))
+    assert reader.summary(prefer_agent=True) == "" and reader.summary(prefer_agent=False) == ""
+
+
+def test_clean_summary_collapses_whitespace_masks_tokens_and_caps() -> None:
+    assert clean_summary("JOB   DONE:\n  x  \u00b7  1 allowed") == "JOB DONE: x \u00b7 1 allowed"
+    assert clean_summary("leaked bedrock-api-key-" + "Q" * 60) == "leaked <...>"
+    assert len(clean_summary("ok " * 100)) == MAX_SUMMARY_CHARS  # a long reply (short words) is capped, not masked
+
+
+def test_exit_reason_maps_a_finished_job() -> None:
+    assert exit_reason("exited", 0, is_job=True) == "job done"
+    assert exit_reason("exited", 0, is_job=False) == "exited"
+    assert exit_reason("exited", 4, is_job=True) == "model unavailable"  # the summary line says what to do
+    assert exit_reason("killed by harness", 0, is_job=True) == "killed by harness"
+
+
+def test_a_kill_the_agent_saw_first_is_still_reported_as_a_kill() -> None:
+    # U1: an agent stops itself on status-killed; if it exits just before the launcher's own kill, it is still a KILL
+    assert killed_meanwhile("exited", "KILLED") == "killed by harness"
+    assert killed_meanwhile("exited", "REVOKED") == "exited"   # a revoke ends the run as JOB STOPPED, not a kill
+    assert killed_meanwhile("exited", "ACTIVE") == "exited" and killed_meanwhile("exited", None) == "exited"
+    assert killed_meanwhile("launcher interrupted", "KILLED") == "launcher interrupted"

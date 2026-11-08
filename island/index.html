@@ -38,24 +38,28 @@ three-d-stage:not(:defined) { visibility: hidden; }
 #brand span { color: var(--orange); }
 
 #banner { top: 12px; left: 50%; transform: translateX(-50%); padding: 2px 22px; font-weight: 600; font-size: 40px; line-height: 1.1; letter-spacing: 1px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
+#banner.long { white-space: normal; width: max-content; max-width: min(760px, calc(100vw - 520px)); font-size: 22px; text-align: center; } /* build 4 (review): long refusals wrap */
 #banner.on { opacity: 1; }
+#banner { max-width: calc(100vw - 500px); overflow: hidden; text-overflow: ellipsis; font-size: clamp(20px, 3vw, 40px); } /* user test: never under the LIVE badge */
+#toast { top: 70px; left: 50%; transform: translateX(-50%); width: max-content; max-width: min(720px, calc(100vw - 520px)); padding: 6px 14px; font: 600 18px var(--vt); line-height: 1.2; background: var(--bad); color: #fff; text-align: center; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 9; }
+#toast.on { opacity: 1; }
 #banner.good { background: var(--good); color: #fff; } #banner.bad { background: var(--bad); color: #fff; }
 #banner.warn { background: var(--warn); } #banner.muted { background: var(--paper); }
 #mode { top: 12px; right: 12px; width: 206px; padding: 2px 10px; font-family: var(--vt); font-size: 26px; line-height: 1.05; text-align: right; }
 #mode.LIVE { background: var(--good); color: #fff; }
 #mode.STALE { background: var(--warn); color: var(--ink); }
-#mode.REPLAY { background: #8a8278; color: #fff; }
+#mode.REPLAY { background: #8a8278; color: #fff; cursor: pointer; width: 250px; } /* build 4: the R hint fits on one line */
 #mode small { display: block; font-size: 16px; opacity: .9; }
 
 /* ---------- left: the agent card (320 px; the left column stays under 340 px). It sits in the bottom-left corner,
    above the ticker: at 1280x720 the top-left is the FILES tower and its door (measured with the default framing). ---------- */
 #card { left: 12px; bottom: 60px; width: 320px; padding: 8px 12px 10px; }
-#card .tabs { display: flex; gap: 6px; margin-bottom: 6px; }
-#card .tabs button { font: inherit; font-size: 14px; border: 2px solid var(--ink); background: var(--paper); padding: 1px 8px; cursor: pointer; }
+#card .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; } /* build 5: any number of agents fits (rows wrap; the card grows upward) */
+#card .tabs button { font: inherit; font-size: 14px; border: 2px solid var(--ink); background: var(--paper); padding: 1px 7px; cursor: pointer; white-space: nowrap; max-width: 142px; overflow: hidden; text-overflow: ellipsis; }
 #card .tabs button.sel { background: var(--orange); }
 #card .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 #card h2 { margin: 0; font-size: 22px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#card .sub { font-family: var(--vt); font-size: 18px; color: var(--dim); line-height: 1.1; }
+#card .sub { font-family: var(--vt); font-size: 18px; color: var(--dim); line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } /* build 5: one line, the rest on hover */
 #card .status { flex: none; padding: 0 8px; border: 2px solid var(--ink); font-family: var(--vt); font-size: 19px; line-height: 1.15; }
 .st-none { background: var(--off); } .st-active { background: var(--good); color: #fff; } .st-revoked { background: var(--bad); color: #fff; }
 .st-kill { background: var(--warn); } .st-stopped { background: var(--ink); color: var(--cream); } .st-ended { background: var(--paper); }
@@ -90,6 +94,21 @@ button.chip:disabled { cursor: wait; }
 #ops button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
 #ops button[data-act=revoke] { background: var(--bad-bg); } #ops button[data-act=kill] { background: #f3c3b6; }
 #ops button[data-act=restore] { background: var(--good-bg); }
+#ops button[data-act=start], #agent .acts button[data-act=start] { background: #cfe6f2; }
+/* build 4: the job picker, the brain switch and START (agent sheet and Factory form) */
+#agent .acts.four { grid-template-columns: repeat(4, 1fr); }
+#agent .work { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin: 3px 0 2px; }
+#agent .work select, #office select { font: 18px var(--vt); border: 2px solid var(--ink); background: #fff; padding: 1px 4px; max-width: 100%; color: var(--ink); }
+#office select { display: block; width: 100%; }
+.brains { display: inline-flex; gap: 4px; }
+.brains button { font: 600 12px var(--px) !important; border: 2px solid var(--ink) !important; background: var(--paper); padding: 2px 6px !important; cursor: pointer; box-shadow: none !important; color: var(--ink); }
+.brains button small { font: 14px var(--vt); color: var(--dim); }
+.brains button.sel { background: var(--peach) !important; box-shadow: inset 0 0 0 2px var(--ink) !important; }
+.jobhint { font: 16px var(--vt); line-height: 1.1; margin: 2px 0 4px; } .jobhint.bad { color: var(--bad); } .jobhint.dim { color: var(--dim); }
+#office label.chk { display: flex; gap: 6px; align-items: center; }
+#office .brainrow { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: center; margin-top: 6px; font: 15px var(--vt); }
+#office .brainrow .lbl { margin: 0; }
+#office .buildrow label.chk { margin: 0; font-size: 17px; }
 #ops button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 #ops button.save { background: var(--cream); font-size: 13px; width: calc(100% - 4px); }
 #ops .hint { font-family: var(--vt); font-size: 15px; color: var(--dim); margin-top: 6px; line-height: 1.1; }
@@ -313,6 +332,7 @@ body.room #inquest { display: none !important; }
 <div id="brand" class="hud paper">MY<span>TOPIA</span></div>
 <div id="mode" class="hud paper STALE">STALE<small>no gateway yet</small></div>
 <div id="banner" class="hud paper"></div>
+<div id="toast" class="hud paper" role="alert"></div>
 
 <div id="card" class="hud paper">
   <div class="tabs" id="tabs"></div>
@@ -331,6 +351,7 @@ body.room #inquest { display: none !important; }
   <div class="lbl">calls refused by the gateway</div>
   <div class="for" id="o-for">acts on: research-bot</div>
   <div class="acts">
+    <div class="act" style="display:none"><button data-act="start" title="START: the gateway starts this agent's program with its job; the launcher owns the process, KILL stops it">START</button><span id="o-start">run its job now</span></div>
     <div class="act"><button data-act="revoke" title="REVOKE: take this agent's whole badge away now; its next call is refused">REVOKE</button><span>take the badge away now · the next call is refused</span></div>
     <div class="act"><button data-act="restore" title="RESTORE: give this agent its badge back">RESTORE</button><span>give the badge back</span></div>
     <div class="act"><button data-act="kill" title="KILL: the launcher stops this agent's running program">KILL</button><span>stop the running program</span></div>
@@ -342,7 +363,7 @@ body.room #inquest { display: none !important; }
     <button data-ui="hide" title="hide every panel; H brings them back">HIDE PANELS</button>
   </div>
   <button data-act="save" class="save">SAVE REPLAY</button>
-  <div class="hint"><span><b>G</b> ledger ·</span> <span><b>T</b> table ·</span> <span><b>F</b> factory</span><br><span><b>A</b> architecture ·</span> <span><b>H</b> hide ·</span> <span><b>?</b> help</span></div>
+  <div class="hint"><span><b>G</b> ledger ·</span> <span><b>T</b> table ·</span> <span><b>F</b> factory</span><br><span><b>A</b> architecture ·</span> <span><b>H</b> hide ·</span> <span><b>C</b> centre ·</span> <span><b>?</b> help</span></div>
 </div>
 
 <div id="strip" class="hud paper">
@@ -365,14 +386,14 @@ body.room #inquest { display: none !important; }
 <div id="help" class="sheet paper">
   <h3>How to read MYTOPIA <span class="dim">? or Esc closes</span></h3>
   <ol>
-    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="5" y="0" width="2" height="2" fill="#2b221e"/><rect x="2" y="2" width="8" height="5" fill="#e0b347"/><rect x="4" y="4" width="1" height="1" fill="#2b221e"/><rect x="7" y="4" width="1" height="1" fill="#2b221e"/><rect x="3" y="7" width="6" height="4" fill="#e0b347"/><rect x="4" y="8" width="2" height="1" fill="#3f8a56"/><rect x="3" y="11" width="2" height="1" fill="#2b221e"/><rect x="7" y="11" width="2" height="1" fill="#2b221e"/></svg><span><b>The robot</b> is an AI agent. It carries a badge (its identity) that lists the tools it may use.</span></li>
+    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="5" y="0" width="2" height="2" fill="#2b221e"/><rect x="2" y="2" width="8" height="5" fill="#e0b347"/><rect x="4" y="4" width="1" height="1" fill="#2b221e"/><rect x="7" y="4" width="1" height="1" fill="#2b221e"/><rect x="3" y="7" width="6" height="4" fill="#e0b347"/><rect x="4" y="8" width="2" height="1" fill="#3f8a56"/><rect x="3" y="11" width="2" height="1" fill="#2b221e"/><rect x="7" y="11" width="2" height="1" fill="#2b221e"/></svg><span><b>The robot</b> is an AI agent. It carries a badge (its identity) that lists the tools it may use. <b>START</b> runs its job; <b>KILL</b> stops it.</span></li>
     <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="1" y="2" width="2" height="10" fill="#2b221e"/><rect x="9" y="2" width="2" height="10" fill="#2b221e"/><rect x="3" y="5" width="6" height="2" fill="#f2892b"/><rect x="5" y="5" width="2" height="2" fill="#fbf7ee"/></svg><span><b>A gate</b> is a tool: files, tickets, mail, delete. It lifts only for a badge that holds that tool.</span></li>
     <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="3" y="0" width="6" height="2" fill="#2b221e"/><rect x="3" y="2" width="6" height="3" fill="#f3d9b4"/><rect x="2" y="5" width="8" height="5" fill="#33415c"/><rect x="5" y="6" width="2" height="2" fill="#d9a032"/><rect x="3" y="10" width="2" height="2" fill="#2b221e"/><rect x="7" y="10" width="2" height="2" fill="#2b221e"/></svg><span><b>The guard</b> is the gateway. It reads the badge on every single call and says yes or no.</span></li>
     <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="0" y="3" width="12" height="1" fill="#b4553e"/><rect x="0" y="8" width="12" height="1" fill="#b4553e"/><rect x="1" y="2" width="1" height="10" fill="#2b221e"/><rect x="5" y="2" width="1" height="10" fill="#2b221e"/><rect x="10" y="2" width="1" height="10" fill="#2b221e"/></svg><span><b>The pen</b> holds a robot whose badge the operator took away (REVOKE). Every call it makes there is refused.</span></li>
-    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="9" y="0" width="2" height="1" fill="#d8cbb3"/><rect x="9" y="1" width="2" height="5" fill="#2b221e"/><rect x="0" y="4" width="3" height="2" fill="#b4553e"/><rect x="3" y="4" width="3" height="2" fill="#b4553e"/><rect x="0" y="3" width="1" height="1" fill="#b4553e"/><rect x="3" y="3" width="1" height="1" fill="#b4553e"/><rect x="6" y="3" width="1" height="1" fill="#b4553e"/><rect x="0" y="6" width="12" height="6" fill="#b4553e"/><rect x="2" y="8" width="2" height="2" fill="#bfe0ec"/><rect x="7" y="8" width="3" height="4" fill="#2b221e"/></svg><span><b>The Factory</b> makes agents, ranks them (Bronze, Silver, Gold, Diamond) and inspects the ones that misbehaved in its bay.</span></li>
+    <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="9" y="0" width="2" height="1" fill="#d8cbb3"/><rect x="9" y="1" width="2" height="5" fill="#2b221e"/><rect x="0" y="4" width="3" height="2" fill="#b4553e"/><rect x="3" y="4" width="3" height="2" fill="#b4553e"/><rect x="0" y="3" width="1" height="1" fill="#b4553e"/><rect x="3" y="3" width="1" height="1" fill="#b4553e"/><rect x="6" y="3" width="1" height="1" fill="#b4553e"/><rect x="0" y="6" width="12" height="6" fill="#b4553e"/><rect x="2" y="8" width="2" height="2" fill="#bfe0ec"/><rect x="7" y="8" width="3" height="4" fill="#2b221e"/></svg><span><b>The Factory</b> makes agents from a form (no code: name, rank, tools, job), ranks them (Bronze, Silver, Gold, Diamond) and inspects the ones that misbehaved in its bay.</span></li>
     <li><svg viewBox="0 0 12 12" shape-rendering="crispEdges"><rect x="2" y="0" width="8" height="12" fill="#fbf7ee"/><rect x="2" y="0" width="8" height="1" fill="#2b221e"/><rect x="2" y="11" width="8" height="1" fill="#2b221e"/><rect x="1" y="0" width="1" height="12" fill="#2b221e"/><rect x="10" y="0" width="1" height="12" fill="#2b221e"/><rect x="3" y="3" width="6" height="1" fill="#7a6f62"/><rect x="3" y="5" width="6" height="1" fill="#7a6f62"/><rect x="3" y="7" width="4" height="1" fill="#7a6f62"/><rect x="7" y="8" width="3" height="3" fill="#3f8a56"/></svg><span><b>The ledger</b> (gatehouse) is the record of every call. Each row carries the fingerprint of the one before it (the hash chain), so nobody can change it quietly.</span></li>
   </ol>
-  <div class="keys"><span><b>H</b>hide panels</span><span><b>F</b>the Factory</span><span><b>?</b>this help</span><span><b>G</b>the ledger room</span><span><b>T</b>every event</span><span><b>A</b>architecture</span><span><b>R</b>play the recording</span><span><b>Esc</b>back</span><span>click a robot or a building</span></div>
+  <div class="keys"><span><b>H</b>hide panels</span><span><b>F</b>the Factory</span><span><b>?</b>this help</span><span><b>G</b>the ledger room</span><span><b>T</b>every event</span><span><b>A</b>architecture</span><span><b>R</b>recording ↔ live</span><span><b>C</b>centre the camera</span><span><b>Esc</b>back</span><span style="grid-column:1/-1">drag: turn · wheel: zoom · hold the wheel down and drag: slide · click a robot or a building</span></div>
 </div>
 <div id="arch" class="sheet paper"></div>
 

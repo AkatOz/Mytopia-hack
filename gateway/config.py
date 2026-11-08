@@ -7,6 +7,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from gateway.decide import DEFAULT_EMAIL_DOMAINS, parse_domains
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATEWAY_DIR = REPO_ROOT / "gateway"
 AWS_ENV_KEYS = ("AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE")
@@ -33,6 +35,9 @@ class Settings:
     island_dir: Path | None = None      # override of the static folder served at /
     quarantine_after: int = 3           # allow-list refusals in the window that make the gateway pull the badge; 0 = off
     quarantine_window_s: float = 60.0   # the window those refusals are counted in
+    # EMAIL_DOMAINS (comma-separated): the only domains send_email may write to, matched exactly and case-insensitively;
+    # a recipient in any other domain is refused (rule egress) and pulls the badge at once
+    email_domains: tuple[str, ...] = DEFAULT_EMAIL_DOMAINS
     # the launcher's env file the Factory appends a minted agent's client id and secret to; None writes no file
     # (Settings built in code, e.g. tests); from_env defaults it to agent/.env
     agent_env: Path | None = None
@@ -69,6 +74,7 @@ class Settings:
             island_dir=resolve(island) if island else None,
             quarantine_after=int(get("QUARANTINE_AFTER", "3")),
             quarantine_window_s=float(get("QUARANTINE_WINDOW_S", "60")),
+            email_domains=parse_domains(get("EMAIL_DOMAINS", ",".join(DEFAULT_EMAIL_DOMAINS))),
             agent_env=resolve(get("AGENT_ENV", "agent/.env")),
         )
 

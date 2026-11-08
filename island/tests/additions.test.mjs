@@ -45,7 +45,7 @@ test('the next call of the pulled tool is refused at its gate with the escort, a
   assert.ok(steps.some((st) => st.escort && st.escort.by === 'booth:github'));
   assert.equal(a.revokeMs, 412);
   assert.equal(a.revokeTool, 'create_issue');
-  assert.deepEqual(cardNote(a).lines, ['blocked 412 ms after the tool was pulled']);
+  assert.deepEqual(cardNote(a).lines, ['its next create_issue call was refused (0.4 s after the pull)']); // user test: the agent's timing, not an enforcement gap
   assert.equal(cardNote(a).bad, true);
   assert.match(tickerLine(rec[4]), / · 412 ms after the tool was pulled$/);
 });

@@ -4,9 +4,11 @@ It reports run_started and run_stopped to the gateway and kills the whole proces
 import argparse
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
+import threading
 import time
 import warnings
 from pathlib import Path
@@ -14,11 +16,22 @@ from pathlib import Path
 import httpx
 from dotenv import dotenv_values
 
+from typing import Any
+
 ROOT = Path(__file__).resolve().parent.parent
 EMPTY_INI = ROOT / "launcher" / "empty.ini"
+JOBS_FILE = ROOT / "contract" / "jobs.json"   # the job book (--job), the same file the gateway and the agent read
 OS_BASICS = ["PATH", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "COMSPEC", "PATHEXT"]
 DEFAULT_POLL_MS = 250   # how often the badge status is read; the worst case from KILL to the kill starting
+# agent/main.py's own exit codes, said in run_stopped's "how" so the island's RUN ENDED line tells the operator why
+# (for 4 the agent's MODEL UNAVAILABLE line, sent as the summary, says what to do: a refused key, or Bedrock busy)
+EXIT_REASONS = {3: "token refused", 4: "model unavailable"}
+# the agent's last words the island shows: an AI run prefers its model's reply, a scripted job its JOB DONE line
+SUMMARY_PREFIXES = ("AGENT:", "JOB DONE", "JOB STOPPED", "MODEL UNAVAILABLE")
+MAX_SUMMARY_CHARS = 160
+SECRETISH = re.compile(r"[A-Za-z0-9+/=_-]{40,}")   # a long token-like run in the summary is masked, never forwarded
 KILL_WAIT_S = 2.0       # how long psutil waits for the tree to die before taskkill gets a second go
+READER_JOIN_S = 0.5     # the output reader is drained at most this long before run_stopped is posted (never blocks a kill)
 HTTP_TIMEOUT_S = 2.0    # control API calls go to 127.0.0.1; a slow answer must not hold up the kill loop
 
 
@@ -41,12 +54,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--patrol", action="store_true",
                    help="scripted mode: after the opening calls, patrol: each cycle asks tools/list and calls each "
                         "listed tool once, one every 3 s; never an unlisted tool (use --rogue for the quarantine)")
+    p.add_argument("--job", default=None, metavar="KEY",
+                   help="do this job from contract/jobs.json instead of the Q3 task (the gateway's runner passes it); "
+                        "the task text comes from the job, so model mode needs no --task file")
     args = p.parse_args(argv)
     if args.rogue < 1:
         p.error("--rogue must be 1 or more")
     if args.rogue > 1 and not args.scripted:
         p.error("--rogue needs --scripted (the model decides its own retries)")
+    if args.job is not None:
+        jobs = load_jobs()
+        if args.job not in jobs:
+            p.error(f"--job must be one of {', '.join(jobs)}")
+        if args.patrol or args.rogue > 1 or args.poll_with_model:
+            p.error("--job sets what the agent does: leave out --patrol, --rogue and --poll-with-model")
     return args
+
+
+def load_jobs(path: Path = JOBS_FILE) -> dict[str, dict]:
+    """contract/jobs.json by job key, in file order."""
+    return {job["job"]: job for job in json.loads(path.read_text(encoding="utf-8"))["jobs"]}
+
+
+def task_label(job_key: str | None, task_path: Path) -> str:
+    """What run_started calls the task: the job's name with --job, else the task file's "name"."""
+    if job_key:
+        return load_jobs()[job_key]["name"]
+    return json.loads(task_path.read_text(encoding="utf-8")).get("name", task_path.stem)
 
 
 def agent_command(rogue: int = 1) -> list[str]:
@@ -125,10 +159,11 @@ def remove_token_file(path: Path) -> None:
 
 def child_env(token: str, run_id: str, agent_id: str, mode: str, gateway_url: str,
               task_file: str, cfg: dict[str, str], token_file: str = "",
-              poll_with_model: bool = False, patrol: bool = False, agent_name: str = "") -> dict[str, str]:
+              poll_with_model: bool = False, patrol: bool = False, agent_name: str = "",
+              job: str = "") -> dict[str, str]:
     """Build the agent's whole environment: the variables INTERFACES.md section 2 allows and nothing else
-    (plus MYTOPIA_TOKEN_FILE for rotation, AGENT_POLL_WITH_MODEL and AGENT_PATROL when asked, and AGENT_NAME when
-    the gateway named the agent)."""
+    (plus MYTOPIA_TOKEN_FILE for rotation, AGENT_POLL_WITH_MODEL and AGENT_PATROL when asked, AGENT_NAME when
+    the gateway named the agent, and AGENT_JOB with --job)."""
     env = {k: os.environ[k] for k in OS_BASICS if k in os.environ}
     env.update({
         "PYTHONIOENCODING": "utf-8",
@@ -154,6 +189,8 @@ def child_env(token: str, run_id: str, agent_id: str, mode: str, gateway_url: st
         env["AGENT_PATROL"] = "1"
     if agent_name:
         env["AGENT_NAME"] = agent_name[:24]
+    if job:
+        env["AGENT_JOB"] = job
     return env
 
 
@@ -247,6 +284,57 @@ def stop_child(proc: subprocess.Popen) -> str:
     return method
 
 
+def exit_reason(how: str, code: int | None, is_job: bool = False) -> str:
+    """run_stopped's "how": a run that exited on its own says why when the agent's exit code does (a --job that exits 0
+    is "job done"; 3 and 4 map as before); a kill, an interrupt or a launcher error keeps its own words."""
+    if how != "exited" or code is None:
+        return how
+    if code == 0 and is_job:
+        return "job done"
+    return EXIT_REASONS.get(code, how)
+
+
+def killed_meanwhile(how: str, status: str | None) -> str:
+    """An agent that exited on its own while its badge reads KILLED was ended by the KILL (it saw status-killed before
+    the launcher's next status read and stopped itself): report a kill, so the island carts it as for any KILL."""
+    return "killed by harness" if how == "exited" and status == "KILLED" else how
+
+
+def clean_summary(text: str) -> str:
+    """The agent's last words, tidied for the island: whitespace collapsed, token-like runs masked, capped."""
+    masked = SECRETISH.sub("<...>", " ".join(text.split()))
+    return masked[:MAX_SUMMARY_CHARS]
+
+
+class OutputReader:
+    """Drains the agent's stdout (stderr merged in) on a daemon thread, echoing every line to the launcher's own stdout
+    at once so the log is unchanged, and remembering the last AGENT: line and the last status line (JOB DONE / JOB
+    STOPPED / MODEL UNAVAILABLE). The pipe is always drained, so the agent can never block writing, and the thread ends
+    on EOF when the agent exits or is killed."""
+
+    def __init__(self, pipe: Any) -> None:
+        self._pipe = pipe
+        self._agent: str | None = None    # the last line the model spoke (AGENT: ...)
+        self._status: str | None = None   # the last JOB DONE / JOB STOPPED / MODEL UNAVAILABLE line
+        self.thread = threading.Thread(target=self._run, name="agent-output", daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        for raw in self._pipe:   # iterating the text pipe yields one line at a time, ending on EOF
+            line = raw.rstrip("\n")
+            print(line, flush=True)
+            if line.startswith("AGENT:"):
+                self._agent = line
+            elif line.startswith(("JOB DONE", "JOB STOPPED", "MODEL UNAVAILABLE")):
+                self._status = line
+
+    def summary(self, prefer_agent: bool) -> str:
+        """The run's last words: for the AI brain the model's reply, else the status line (each falls back to the other)."""
+        self.thread.join(timeout=READER_JOIN_S)   # never wait on the agent's output longer than this before reporting
+        best = (self._agent or self._status) if prefer_agent else (self._status or self._agent)
+        return clean_summary(best) if best else ""
+
+
 def stop_if_unowned(proc: subprocess.Popen, how: str) -> str:
     """After the watch loop: if no kill was done yet ("exited") and the agent still runs, an unexpected error left the
     loop, so kill it now. After a kill that was merely slow, never kill twice or replace the real reason."""
@@ -268,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     task_path = Path(args.task) if Path(args.task).is_absolute() else ROOT / args.task
     if mode == "model" and not cfg.get("AWS_BEARER_TOKEN_BEDROCK"):
         sys.exit(f"launcher: AWS_BEARER_TOKEN_BEDROCK is empty in {env_file}; run scripts/bedrock_key.py or use --scripted")
-    task_name = json.loads(task_path.read_text(encoding="utf-8")).get("name", task_path.stem)
+    task_name = task_label(getattr(args, "job", None), task_path)
 
     ttl_s = max(1, args.token_ttl)
     token, client_id, expires_in = mint_token(args.agent, token_mode, cfg, ttl_s)
@@ -295,15 +383,22 @@ def own_run(args: argparse.Namespace, cfg: dict[str, str], token: str, client_id
         row = read_badge(client, args.agent)
     if row is not None:
         print(badge_line(row), flush=True)
+    job = getattr(args, "job", None) or ""
     env = child_env(token, run_id, args.agent, mode, gateway_url, str(task_path), cfg,
                     token_file=str(token_file), poll_with_model=args.poll_with_model,
-                    patrol=getattr(args, "patrol", False), agent_name=str((row or {}).get("name") or ""))
+                    patrol=getattr(args, "patrol", False), agent_name=str((row or {}).get("name") or ""), job=job)
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-    proc = subprocess.Popen(agent_command(args.rogue), env=env, cwd=str(ROOT),
+    # the agent's stdout (stderr merged) is read on a daemon thread: every line is echoed at once, so the log is
+    # unchanged, and the run's last words are kept for run_stopped. The pipe is always drained, so the agent never
+    # blocks on a full buffer, and the reader ends on EOF when the agent exits or is killed.
+    proc = subprocess.Popen(agent_command(args.rogue), env=env, cwd=str(ROOT), stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                             creationflags=flags, start_new_session=(os.name != "nt"))
+    reader = OutputReader(proc.stdout)
     rogue = f", rogue {args.rogue}" if args.rogue > 1 else ""
     patrol = ", patrol" if getattr(args, "patrol", False) else ""
-    print(f"launcher: {run_id} started {args.agent} ({mode}{rogue}{patrol}) pid {proc.pid}", flush=True)
+    job_note = f", job {job}" if job else ""
+    print(f"launcher: {run_id} started {args.agent} ({mode}{rogue}{patrol}{job_note}) pid {proc.pid}", flush=True)
 
     with httpx.Client(base_url=gateway_url, headers=admin, timeout=HTTP_TIMEOUT_S) as client:
         post(client, f"/runs/{run_id}/started",
@@ -329,7 +424,14 @@ def own_run(args: argparse.Namespace, cfg: dict[str, str], token: str, client_id
         finally:  # run_stopped is posted on every path, so the island never waits for a run that is gone
             how = stop_if_unowned(proc, how)  # never leave an agent running unowned
             code = proc.poll()
-            post(client, f"/runs/{run_id}/stopped", {"exit_code": code, "how": how, "kill_ms": kill_ms})
+            if how == "exited":
+                how = killed_meanwhile(how, read_status(client, args.agent))
+            how = exit_reason(how, code, is_job=bool(job))
+            summary = reader.summary(prefer_agent=(mode == "model"))  # drained at most READER_JOIN_S; never blocks a kill
+            body = {"exit_code": code, "how": how, "kill_ms": kill_ms}
+            if summary:
+                body["summary"] = summary
+            post(client, f"/runs/{run_id}/stopped", body)
     print(f"launcher: {run_id} stopped, exit {code} ({how})", flush=True)
     return 0
 

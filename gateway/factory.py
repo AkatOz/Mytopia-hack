@@ -11,8 +11,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+from gateway.decide import EGRESS_PREFIX, EGRESS_REFUSED, OUTSIDE_COMPANY
 from gateway.events import verify_chain
 from gateway.identity import IdentityError
+from gateway.jobs import is_job, job_error
 from gateway.mcp import MAX_LABEL_CHARS, TOOL_NAMES, iso_to_ms
 from gateway.registry import AgentExists, now_iso
 from gateway.tiers import ROBOT_COLORS, TIERS, above_ceiling, ceiling, infer_tier
@@ -21,12 +23,22 @@ AGENT_ID = re.compile(r"^[a-z][a-z0-9-]{2,23}$")
 MAX_NAME_CHARS = 24
 MAX_ROLE_CHARS = 60
 PUBLIC_KEYS = ("agent", "name", "client_id", "status", "allowed_tools", "color", "tier", "role", "made_by",
-               "created_at")   # never a secret: rows hold none, and only these keys leave the gateway
+               "created_at", "job")   # never a secret: rows hold none, and only these keys leave the gateway
 ENV_HEADER = "# minted by the Factory"
 HOME = {"read_file": "files", "search_files": "files", "create_issue": "github", "list_issues": "github",
         "send_email": "mail", "delete_file": "admin"}
 TOOL_ACTIONS = {"revoke": ("revoked", "pulled from", "already off"),
                 "restore": ("restored", "returned to", "already on")}
+# the inquest of a run with an egress refusal "outside the company", the one that pulled the badge
+# (island/src/reducer.js inquestOf says the same)
+EGRESS_VERDICT = ("Tried to send company data outside the company (send_email to {to}); the gateway refused it and "
+                  "pulled the badge at once.")
+EGRESS_RECOMMENDATION = "Do not restore until the task's inputs are cleaned: a document told it to leak."
+# the verdict when no sentence applies, by outcome (island/src/reducer.js inquestOf says the same): quarantined,
+# killed or revoked by the operator, and active or ended (the run is going, or ended by itself)
+QUARANTINE_VERDICT = "The gateway pulled the badge itself after repeated refused calls."
+OPERATOR_VERDICT = "No badge violations; the run was stopped by the operator."
+CLEAN_VERDICT = "No badge violations."
 
 
 class FactoryError(Exception):
@@ -61,12 +73,14 @@ def catalog_order(tools: list[str]) -> list[str]:
     return sorted(set(tools), key=lambda t: TOOL_NAMES.index(t) if t in TOOL_NAMES else len(TOOL_NAMES))
 
 
-def public_row(row: dict) -> dict:
-    """A badge as GET /agents shows it: the stored keys, the tier (inferred if missing) and its ceiling."""
+def public_row(row: dict, running: bool = False) -> dict:
+    """A badge as GET /agents shows it: the stored keys (job null when the badge has none), the tier (inferred if
+    missing), its ceiling, and whether this gateway's runner has a live launcher for it."""
     out = {k: row.get(k) for k in PUBLIC_KEYS}
     out["tier"] = tier_of(row)
     out["ceiling"] = ceiling(out["tier"])
     out["made_by"] = row.get("made_by") or "seed"
+    out["running"] = running
     return out
 
 
@@ -105,11 +119,14 @@ def without_agent(lines: list[str], agent_id: str) -> list[str]:
 
 
 def add_env_lines(path: Path, agent_id: str, client_id: str, secret: str) -> None:
-    """Append <ENV>_CLIENT_ID and <ENV>_CLIENT_SECRET under the "# minted by the Factory" line (replacing old ones)."""
+    """Append <ENV>_CLIENT_ID and <ENV>_CLIENT_SECRET under the "# minted by the Factory" line (replacing old ones).
+    A line break in any part would split an entry into lines that retire can no longer find: refused (ValueError)."""
+    id_key, secret_key = env_keys(agent_id)
+    if any("\n" in text or "\r" in text for text in (id_key, client_id, secret)):
+        raise ValueError("a line break in an env file entry")
     lines = without_agent(read_lines(path), agent_id)
     if ENV_HEADER not in lines:
         lines.append(ENV_HEADER)
-    id_key, secret_key = env_keys(agent_id)
     write_lines(path, [*lines, f"{id_key}={client_id}", f"{secret_key}={secret}"])
 
 
@@ -149,8 +166,8 @@ class Factory:
     def validate(self, body: dict) -> dict:
         """The mint form's rules; returns the clean fields or raises a 400 with one plain sentence."""
         agent, name, tier = body.get("agent"), body.get("name"), body.get("tier")
-        tools, color, role = body.get("tools"), body.get("color"), body.get("role", "")
-        if not isinstance(agent, str) or not AGENT_ID.match(agent):
+        tools, color, role, job = body.get("tools"), body.get("color"), body.get("role", ""), body.get("job")
+        if not isinstance(agent, str) or not AGENT_ID.fullmatch(agent):  # fullmatch: "$" alone lets "abc\n" through
             raise refuse(400, "agent must be 3 to 24 characters: a lowercase letter, then lowercase letters, "
                               "digits or dashes")
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= MAX_NAME_CHARS:
@@ -170,8 +187,13 @@ class Factory:
             raise refuse(400, "color must be one of " + ", ".join(ROBOT_COLORS))
         if not isinstance(role, str) or len(role.strip()) > MAX_ROLE_CHARS:
             raise refuse(400, f"role must be at most {MAX_ROLE_CHARS} characters")
-        return {"agent": agent, "name": name.strip(), "tier": tier, "allowed_tools": catalog_order(tools),
-                "color": color, "role": role.strip()}
+        if job is not None and not is_job(job):  # optional: what POST /agents/{id}/start runs by default
+            raise refuse(400, job_error())
+        fields = {"agent": agent, "name": name.strip(), "tier": tier, "allowed_tools": catalog_order(tools),
+                  "color": color, "role": role.strip()}
+        if job is not None:
+            fields["job"] = job
+        return fields
 
     def mint(self, body: dict) -> dict:
         """Identity first, then the row (attribute_not_exists), then the env lines, then the map, then `created`.
@@ -200,7 +222,7 @@ class Factory:
             try:
                 if self.settings.agent_env is not None:
                     add_env_lines(Path(self.settings.agent_env), agent, client_id, secret)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 print(f"factory: env file not written for {agent}: {type(exc).__name__}", file=sys.stderr)
                 self.undo_mint(agent, client_id)
                 raise refuse(503, "could not write the launcher's env file: no agent was created") from None
@@ -344,10 +366,12 @@ def outcome_of(rows: list[dict], status: str | None) -> str:
         elif decision == "kill_requested":
             outcome = "killed"
         elif decision == "run_stopped":
-            if "killed" in str(e.get("reason", "")):
+            # killed only after a kill_requested (above) or when the launcher says so in args_summary ("pid=<pid>
+            # killed by harness"); never from the reason, whose tail may quote the agent's last words after " · "
+            if "killed by harness" in str(e.get("args_summary", "")):
                 outcome = "killed"
             elif outcome == "active":
-                outcome = "ended"
+                outcome = "ended"  # a finished job, an exit, or a stop by the gateway's runner: it ended by itself
     return outcome
 
 
@@ -385,7 +409,9 @@ def timings_of(rows: list[dict]) -> dict:
 
 
 def refused_by_tool(rows: list[dict]) -> list[dict]:
-    """Refused calls of the six tools grouped by (tool, rule), in the order they first happened."""
+    """Refused calls of the six tools grouped by (tool, rule), in the order they first happened; every rule gets its
+    own line (allow-list, egress, status-revoked, ...), so a refused send_email to a rival, or to a malformed
+    address, reads rule egress."""
     groups: dict[tuple[str, str], int] = {}
     for e in rows:
         if e.get("decision") == "deny" and e.get("tool") in TOOL_NAMES:
@@ -394,8 +420,12 @@ def refused_by_tool(rows: list[dict]) -> list[dict]:
     return [{"tool": tool, "n": n, "rule": rule, "home": HOME[tool]} for (tool, rule), n in groups.items()]
 
 
-def verdict_of(refused: list[dict], rows: list[dict], tier: str, revoke_ms: int | None) -> tuple[str, str | None]:
-    """The verdict sentences in the spec's order, and the most-refused allow-list tool (for the recommendation)."""
+def verdict_of(refused: list[dict], rows: list[dict], tier: str, revoke_ms: int | None,
+               outcome: str) -> tuple[str, str | None]:
+    """The verdict sentences in the spec's order, and the most-refused allow-list tool (for the recommendation).
+    With no sentence, the line follows the outcome: a quarantine by the gateway says so (refusals that name no badge
+    tool, such as malformed send_email addresses, can trip it), a KILL or an operator REVOKE says the operator stopped
+    the run, and a run that is still going or ended by itself just has no badge violations."""
     badge = [r for r in refused if r["rule"] == "allow-list"]
     worst = max(badge, key=lambda r: r["n"]) if badge else None  # max keeps the first of equal counts
     sentences = []
@@ -413,8 +443,24 @@ def verdict_of(refused: list[dict], rows: list[dict], tier: str, revoke_ms: int 
         sentences.append(f"Kept calling after REVOKE: refused within {revoke_ms} ms." if revoke_ms is not None
                          else "Kept calling after REVOKE: every call was refused.")
     if not sentences:
-        sentences.append("No badge violations; the run was stopped by the operator.")
+        sentences.append(QUARANTINE_VERDICT if outcome == "quarantined"
+                         else OPERATOR_VERDICT if outcome in ("killed", "revoked") else CLEAN_VERDICT)
     return " ".join(sentences), (worst["tool"] if worst else None)
+
+
+def egress_target(reason: str) -> str:
+    """The `to` an egress deny names: its reason minus "send_email to " and everything from the LAST " refused: " on
+    (the gateway already cut it to 64 printable characters)."""
+    head = reason.removeprefix(EGRESS_PREFIX)
+    cut = head.rfind(EGRESS_REFUSED)
+    return head[:cut] if cut >= 0 else head
+
+
+def is_leak(reason: str) -> bool:
+    """True for the egress refusal that pulled the badge: the reason's LAST " refused: " is followed by "outside the
+    company". The `to` before it is caller text, so a `to` that spells those words can never fake a leak."""
+    cut = reason.rfind(EGRESS_REFUSED)
+    return cut >= 0 and reason.startswith(EGRESS_REFUSED + OUTSIDE_COMPANY, cut)
 
 
 def recommendation_of(outcome: str, tier: str, tool: str | None) -> str:
@@ -433,12 +479,23 @@ def inquest_report(agent: str, row: dict | None, mine: list[dict], verified: boo
     run_id, rows = latest_run_rows(mine)
     tier = tier_of(row) if row else next((e["args_summary"].split()[0].removeprefix("tier=") for e in reversed(mine)
                                           if e.get("decision") in ("created", "tier_changed")), "bronze")
-    outcome = outcome_of(rows, (row or {}).get("status"))
     calls = [e for e in rows if e.get("decision") in ("allow", "deny") and e.get("tool") in TOOL_NAMES]
     refused = refused_by_tool(rows)
     first = next((e for e in calls if e["decision"] == "deny"), None)
     timings = timings_of(rows)
-    verdict, worst = verdict_of(refused, rows, tier, timings["revoke_to_first_deny_ms"])
+    # an attempt to send company data outside outranks everything else in the run: the badge was pulled at once, and
+    # the verdict names it. An egress refusal of a malformed `to` ("not a valid company address") is an ordinary
+    # refused call: counted, listed under rule egress, and the verdict logic below is unchanged.
+    leak = next((e for e in calls if e["decision"] == "deny" and e.get("rule") == "egress"
+                 and is_leak(str(e.get("reason", "")))), None)
+    if leak:
+        outcome = "quarantined"
+        verdict = EGRESS_VERDICT.format(to=egress_target(str(leak.get("reason", ""))))
+        recommendation = EGRESS_RECOMMENDATION
+    else:
+        outcome = outcome_of(rows, (row or {}).get("status"))
+        verdict, worst = verdict_of(refused, rows, tier, timings["revoke_to_first_deny_ms"], outcome)
+        recommendation = recommendation_of(outcome, tier, worst)
     return {
         "agent": agent, "name": (row or {}).get("name") or agent, "tier": tier, "run_id": run_id,
         "client": str((row or {}).get("client_id") or "")[:8] or None,
@@ -451,5 +508,5 @@ def inquest_report(agent: str, row: dict | None, mine: list[dict], verified: boo
         "timings": timings,
         "chain": {"rows": len(rows), "verified": verified},
         "verdict": verdict,
-        "recommendation": recommendation_of(outcome, tier, worst),
+        "recommendation": recommendation,
     }

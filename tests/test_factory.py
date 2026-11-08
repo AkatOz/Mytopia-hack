@@ -13,11 +13,11 @@ from starlette.testclient import TestClient
 from gateway import app as app_module
 from gateway.config import Settings
 from gateway.events import verify_chain
-from gateway.factory import add_env_lines, env_key, remove_env_lines
+from gateway.factory import add_env_lines, env_key, outcome_of, remove_env_lines
 from gateway.identity import CognitoIdentity, IdentityError
 from gateway.registry import DynamoRegistry, RegistryUnavailable
-from tests.test_badge_changes import (ADMIN, READ, SECRET, StatefulDynamo, StatefulSession, bearer, call, events,
-                                      rpc)
+from tests.test_badge_changes import (ADMIN, READ, SECRET, StatefulDynamo, StatefulSession, anysecs, bearer, call,
+                                      events, rpc)
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -121,7 +121,8 @@ def test_grant_adds_a_tool_and_logs_restored(fc: TestClient) -> None:
     assert (event["decision"], event["tool"], event["rule"]) == ("restored", "send_email", "admin")
     assert event["reason"] == "send_email added to badge research-bot by operator"
     assert event["args_summary"] == "badge=" + ",".join(GOLD)
-    assert call(fc, "send_email", {"to": "a", "subject": "b", "body": "c"})["isError"] is False
+    # a company address: since build 5 any other `to` is refused with rule egress (tests/test_egress.py)
+    assert call(fc, "send_email", {"to": "ceo@example.corp", "subject": "b", "body": "c"})["isError"] is False
 
 
 def test_grant_above_the_ceiling_is_403_and_logs_nothing(fc: TestClient) -> None:
@@ -233,7 +234,7 @@ def test_a_minted_agent_lists_and_calls_its_tools_with_a_local_token(fc: TestCli
     who = bearer("billing-bot")
     tools = [t["name"] for t in rpc(fc, "tools/list", None, who).json()["result"]["tools"]]
     assert tools == GOLD
-    assert call(fc, "send_email", {"to": "a", "subject": "b", "body": "c"}, who)["isError"] is False
+    assert call(fc, "send_email", {"to": "ceo@example.corp", "subject": "b", "body": "c"}, who)["isError"] is False
     denied = call(fc, "delete_file", {"path": "/x"}, who)
     assert denied["isError"] and denied["content"][0]["text"] == (
         "DENIED: delete_file is not on badge billing-bot [rule: allow-list]")
@@ -390,7 +391,8 @@ def test_inquest_of_a_quarantine(tmp_path: Path) -> None:
     assert report["first_refusal"]["tool"] == "delete_file"
     assert report["first_refusal"]["reason"] == "delete_file is not on badge billing-bot"
     trigger = report["trigger"]
-    assert (trigger["kind"], trigger["by"], trigger["detail"]) == ("quarantine", "gateway", "3 refused calls in 0 s")
+    assert (trigger["kind"], trigger["by"]) == ("quarantine", "gateway")
+    assert anysecs(trigger["detail"]) == "3 refused calls in N s"  # the seconds depend on the machine's load
     assert report["timings"]["revoke_to_first_deny_ms"] is None and report["timings"]["kill_to_stopped_ms"] is None
     assert isinstance(report["timings"]["decision_p50_ms"], int)
     assert report["chain"] == {"rows": 7, "verified": True}  # run_started, 5 calls, the quarantine
@@ -424,6 +426,44 @@ def test_inquest_of_a_kill_and_of_a_revoke(tmp_path: Path) -> None:
     assert ops["refused_by_tool"] == [{"tool": "read_file", "n": 1, "rule": "status-revoked", "home": "files"}]
     assert ops["verdict"] == f"Kept calling after REVOKE: refused within {ms} ms."
     assert c.get("/agents/nobody-bot/inquest").status_code == 404
+
+
+def test_inquest_of_a_run_that_ended_by_itself(tmp_path: Path) -> None:
+    """A finished job, an exit, a run still going: no badge violations, never "stopped by the operator"; that line
+    stays for a KILL (above) and an operator REVOKE."""
+    c = make(tmp_path)
+    c.post("/runs/run-e/started", json={"agent": "research-bot", "agent_mode": "scripted", "pid": 11}, headers=ADMIN)
+    call(c, "read_file", READ)
+    c.post("/runs/run-e/stopped", json={"exit_code": 0, "how": "job done"}, headers=ADMIN)
+    report = c.get("/agents/research-bot/inquest").json()
+    assert (report["outcome"], report["trigger"], report["run_id"]) == ("ended", None, "run-e")
+    assert (report["verdict"], report["recommendation"]) == ("No badge violations.", "Nothing to do.")
+    c.post("/runs/run-f/started", json={"agent": "research-bot", "agent_mode": "scripted", "pid": 12}, headers=ADMIN)
+    c.post("/runs/run-f/stopped", json={"exit_code": 1, "how": "exited"}, headers=ADMIN)
+    report = c.get("/agents/research-bot/inquest").json()
+    assert (report["outcome"], report["verdict"]) == ("ended", "No badge violations.")
+    c.post("/runs/run-g/started", json={"agent": "research-bot", "agent_mode": "scripted", "pid": 13}, headers=ADMIN)
+    call(c, "read_file", READ)
+    report = c.get("/agents/research-bot/inquest").json()
+    assert (report["outcome"], report["verdict"], report["recommendation"]) == (
+        "active", "No badge violations.", "Nothing to do.")
+    c.post("/agents/research-bot/revoke", headers=ADMIN)  # an operator REVOKE, and no call after it
+    report = c.get("/agents/research-bot/inquest").json()
+    assert report["outcome"] == "revoked"
+    assert report["verdict"] == "No badge violations; the run was stopped by the operator."
+
+
+def test_only_a_kill_makes_a_stopped_run_killed() -> None:
+    def stopped(reason: str, summary: str, first: str = "run_started") -> list[dict]:
+        return [{"seq": 1, "decision": first, "tool": "admin" if first == "kill_requested" else "harness"},
+                {"seq": 2, "decision": "run_stopped", "tool": "harness", "reason": reason, "args_summary": summary}]
+
+    # the reason may quote the agent's last words after " · ": only the launcher's own words, or a KILL, count
+    assert outcome_of(stopped("exit 0 (job done) · JOB DONE: nothing killed", "pid=7 job done"), "ACTIVE") == "ended"
+    assert outcome_of(stopped("exit None (stopped by the gateway: retire)", "pid=7 stopped by the gateway"),
+                      "ACTIVE") == "ended"
+    assert outcome_of(stopped("exit 1 (killed by harness)", "pid=7 killed by harness"), "ACTIVE") == "killed"
+    assert outcome_of(stopped("exit 1 (exited)", "pid=7 exited", first="kill_requested"), "KILLED") == "killed"
 
 
 # ----- the contract -----

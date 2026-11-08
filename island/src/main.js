@@ -12,7 +12,7 @@
 // agent sheet replaces the robot click's raw JSON; the chain check runs here (ledger.js verifyChain) for the strip
 // and the inquest. Scene calls that builder B1 adds tonight are guarded (scene.x?.()) so the page runs on either scene.
 import { createScene } from './scene.js';
-import { createHud, normTiers, rowSummary } from './hud.js';
+import { createHud, normTiers, normJobs, rowSummary } from './hud.js';
 import { ARCH_SHEET } from './arch.js';
 import { verifyChain } from './ledger.js';
 import { TIERS } from './tiers.js';
@@ -26,11 +26,12 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // the scene takes a few seconds to load; a recording must never read STALE (or LIVE) meanwhile
-if (source === 'replay') { $('mode').className = 'hud paper REPLAY'; $('mode').innerHTML = 'REPLAY<small>loading the recording</small>'; }
+if (source === 'replay') { $('mode').className = 'hud paper REPLAY'; $('mode').innerHTML = 'REPLAY<small>loading · R or click: LIVE</small>'; }
 
 let roster = DEFAULT_ROSTER;
 let state = initialState(roster);
 let tiers = TIERS;
+let jobs = []; // build 4: GET /jobs
 let lastGoodPoll = null, uiSel = null, recordedOn = '', chainId = '', gwMode = '';
 let chain = { verified: null, brokenAt: null, n: -1 }; // the browser's own hash-chain check (verified null: nothing real to check)
 // action -> truthy while "sent...": the four buttons hold true; a tool chip holds 'tool:<name>' -> the agent id it acts on;
@@ -42,7 +43,8 @@ const scene = await createScene(document.querySelector('three-d-stage'));
 const hasFactory = typeof scene.removeRobot === 'function';
 const hud = createHud(scene, {
   source, staleAfterMs: cfg.staleAfterMs, lastGoodPoll: () => lastGoodPoll, recordedOn: () => recordedOn, getState: () => state,
-  selected: () => selected(), inRoom: () => !!curRoom(), tiers: () => tiers, rawInquest: (id, report) => rawInquest(id, report), mint: (spec) => mint(spec),
+  selected: () => selected(), inRoom: () => !!curRoom(), tiers: () => tiers, rawInquest: (id, report) => rawInquest(id, report), mint: (spec, opts) => mint(spec, opts),
+  jobs: () => jobs, rerender: () => render(), // build 4
 });
 
 // one robot per agent in the roster (an unknown client gets no robot: its refusals are drawn at the gatehouse)
@@ -86,7 +88,7 @@ function play(f, quiet = false) {
     case 'ack': delete pendingBtn[f.action]; break;
     case 'lamp': if (!backlog) scene.lamp(f.target, f.tone); break;
     case 'slip': if (!quiet) scene.slip(f.from, f.ok); break;
-    case 'banner': if (!quiet) { queue.push(f); pump(); } break;
+    case 'banner': if (!quiet) { bannerQ.push(f); if (bannerQ.length > 3) bannerQ.shift(); pumpBanner(); } break;
     case 'stampAt': if (!backlog) { queue.push(f); pump(); } break;
     // build 3
     case 'setTier': scene.setTier?.(f.agent, f.tier); break;
@@ -102,6 +104,9 @@ function timed(f) {
   return Promise.resolve();
 }
 function pump() { while (playing < MAX_AT_ONCE && queue.length) { const f = queue.shift(); playing++; timed(f).finally(() => { playing--; pump(); }); } }
+// banners one at a time, in order, at most three waiting (the newest kept)
+const bannerQ = []; let bannerBusy = false;
+function pumpBanner() { if (bannerBusy || !bannerQ.length) return; const f = bannerQ.shift(); bannerBusy = true; hud.banner(f.text, f.tone).finally(() => { bannerBusy = false; pumpBanner(); }); }
 scene.onFx((f, quiet) => play(f, quiet));
 // a robot raised its ID card: the DOM card over that gate (window, pen) for 1.2 s, in the robot's colour
 scene.onIdCard((id, card) => hud.idCard(card.at, card.lines, state.agents[id]?.color));
@@ -111,12 +116,13 @@ const ADMIN = ['revoked', 'restored', 'kill_requested', 'run_started', 'created'
 function ingest(events) {
   events.forEach((ev, i) => {
     const r = apply(state, ev);
-    state = r.state;
+    state = r.state; state.tickerLocal = false; // a row arrived: the ticker shows it again
     ensureRobots();
     const quiet = events.length > 4 && i < events.length - 2; // catching up on a backlog: no fireworks for old rows
     for (const f of r.effects) play(f, quiet);
     if (ADMIN.includes(ev.decision) && source === 'live') loadAgents(); // the roster follows every badge change
-    if (ev.decision === 'run_started') uiSel = null;
+    // build 4 (review): a run_started no longer drops the operator's own tab choice (KILL could hit the agent that just
+    // started); with no choice made, the card follows the newest run (state.selected); START and BUILD select their agent
   });
   if (events.length) { scene.drawLedger?.(state.log, source, chainId); scene.roomsRefresh?.(); strip(); checkChain(); hud.renderBadge(); } // the badge names the agent_mode
   render();
@@ -151,6 +157,11 @@ requestAnimationFrame(frame);
 // ---------- live: poll the gateway ----------
 async function loadAgents() {
   try { const r = await fetch(`${cfg.api}/agents`, { cache: 'no-store' }); if (r.ok) { roster = await r.json(); state = withRoster(state, roster); ensureRobots(); render(); scene.roomsRefresh?.(); } } catch {}
+}
+// build 4: the job book (GET /jobs, contract/jobs.json); empty until it answers, so the job controls stay hidden
+// on a gateway without it and in replay
+async function loadJobs() {
+  try { const r = await fetch(`${cfg.api}/jobs`, { cache: 'no-store' }); if (r.ok) { jobs = normJobs(await r.json()); hud.jobsChanged(); render(); } } catch {}
 }
 // the tier table (GET /tiers); tiers.js until it answers, and in replay when no gateway serves the page
 async function loadTiers() {
@@ -223,7 +234,7 @@ async function post(url, json) {
   } catch {}
   return { res, body, ok: !!(res && res.ok) };
 }
-function refused(text) { state = { ...state, ticker: text }; hud.banner(text, 'bad'); render(); }
+function refused(text) { state = { ...state, ticker: text, tickerLocal: true }; hud.toast(text); render(); }
 
 // Save replay: every event seen, as a file the island can play back with ?replay=<file>
 function saveReplay() {
@@ -232,16 +243,39 @@ function saveReplay() {
   a.download = `mytopia-replay-${(state.log[0]?.ts || 'empty').slice(0, 19).replace(/[:T]/g, '-')}.json`;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-async function press(act) {
+// forId (build 4): the agent sheet's own robot; the card and the operator panel act on the selected agent
+async function press(act, forId = null) {
   if (act === 'save') return saveReplay();
+  if (act === 'start') { const id = forId || selected(), c = hud.workChoice(id); return startAgent(id, c.job, c.brain); }
   if (source === 'replay' || pendingBtn[act]) return;
-  const id = selected();
+  const id = forId || selected();
   const url = act === 'reset' ? `${cfg.api}/demo/reset` : `${cfg.api}/agents/${encodeURIComponent(id)}/${act}`;
   pendingBtn[act] = true; render();
   const { res, body, ok } = await post(url);
   if (act === 'reset') { location.reload(); return; }
-  if (!ok) { delete pendingBtn[act]; refused(`${act.toUpperCase()} refused: ${errText(res, body)}`); }
+  if (!ok) { delete pendingBtn[act]; refused(`${act.toUpperCase()} refused: ${errText(res, body)}`); return; }
+  // user test: a repeat click (already KILLED, already ACTIVE) changes nothing and logs no row: say so, never wait for one
+  if (body && body.changed === false) { delete pendingBtn[act]; state = { ...state, ticker: body.note || `${act.toUpperCase()}: nothing changed`, tickerLocal: true }; hud.toast(body.note || `${act.toUpperCase()}: nothing changed`); render(); }
   // on 2xx the label stays "sent..." until the matching event (revoked / restored / kill_requested) arrives
+}
+// START (build 4): POST /agents/{id}/start {job, brain}. The gateway starts the launcher (which mints the token,
+// starts the agent's program and owns it, so KILL still kills); "sent..." stays until that run's run_started arrives
+// (ack 'start:<id>'), or 25 s if it never does (the launcher's log says why).
+async function startAgent(id, job, brain = 'scripted') {
+  const key = 'start:' + id;
+  if (source === 'replay' || pendingBtn[key] || !id) return;
+  const selAtPress = uiSel; // user test: the answer can take seconds; never jump away from a tab picked meanwhile
+  const token = {}; // build 4 (fix review): one per press, so an older press's 25 s timer never fires on a newer one
+  pendingBtn[key] = token; render();
+  const { res, body, ok } = await post(`${cfg.api}/agents/${encodeURIComponent(id)}/start`, { job, brain });
+  if (!ok) { delete pendingBtn[key]; refused(`START refused: ${errText(res, body)}`); return; }
+  const j = jobs.find((x) => x.job === (body && body.job) || x.job === job);
+  if (uiSel === selAtPress) uiSel = id; // the card follows the agent just started, unless another was picked meanwhile
+  if ($('agent').classList.contains('on') && hud.sheetAgent() === id) openSheet(null); // build 4 (review): the sheet must not hide its walk, an escort or the inquest
+  state = { ...state, ticker: `START ${state.agents[id]?.name || id}: ${j ? j.name : job} (${brain === 'model' ? 'AI · Nova 2 Lite' : 'scripted'}), launcher pid ${body && body.pid}` };
+  render();
+  // build 4 (review): a launcher that dies after the gateway's start check never posts run_started: say so, don't just go quiet
+  setTimeout(() => { if (pendingBtn[key] === token) { delete pendingBtn[key]; refused(`START ${state.agents[id]?.name || id}: the program did not report in 25 s (the gateway console and launcher/logs say why)`); } }, 25000);
 }
 function ui(what) {
   if (what === 'factory') toggleSheet('office');
@@ -258,8 +292,8 @@ $('tabs').addEventListener('click', (e) => { const b = e.target.closest('button[
 // now also grants a tool that was never on the badge. A padlocked chip asks too: the gateway answers 403 with its
 // sentence ("delete_file is above the Gold ceiling"), shown as a banner while the chip shakes. A chip shows "sent..."
 // until the gateway's revoked/restored event for that tool comes back (ack 'tool:<name>'); changed:false logs nothing.
-async function pressTool(tool, act, locked) {
-  const key = 'tool:' + tool, id = selected();
+async function pressTool(tool, act, locked, forId = null) {
+  const key = 'tool:' + tool, id = forId || selected();
   if (source === 'replay' || pendingBtn[key]) return;
   if (!locked) { pendingBtn[key] = id; render(); }
   const { res, body, ok } = await post(`${cfg.api}/agents/${encodeURIComponent(id)}/tools/${encodeURIComponent(tool)}/${act}`);
@@ -270,8 +304,8 @@ async function pressTool(tool, act, locked) {
   render();
 }
 // PROMOTE / DEMOTE: POST /agents/{id}/tier {tier}; the medal changes when the tier_changed event arrives
-async function pressTier(to) {
-  const id = selected();
+async function pressTier(to, forId = null) {
+  const id = forId || selected();
   if (source === 'replay' || pendingBtn.tier || !to) return;
   pendingBtn.tier = id; render();
   const { res, body, ok } = await post(`${cfg.api}/agents/${encodeURIComponent(id)}/tier`, { tier: to });
@@ -290,25 +324,33 @@ async function pressRetire(id) {
 // the card, the agent sheet and the office share one click handler: chips, tier arrows, the three buttons, RETIRE
 function onPanelClick(e) {
   const b = e.target.closest('button'); if (!b || b.disabled) return;
-  if (b.dataset.tool) pressTool(b.dataset.tool, b.dataset.act, !!b.dataset.locked);
-  else if ('tier' in b.dataset) pressTier(b.dataset.tier);
+  // build 4: a button in the agent sheet acts on the sheet's own robot, even when another agent's run_started has
+  // moved the card meanwhile (two agents working at once made "the selected agent" the wrong target)
+  const forId = e.currentTarget.id === 'agent' ? (hud.sheetAgent() || null) : null;
+  if (b.dataset.tool) pressTool(b.dataset.tool, b.dataset.act, !!b.dataset.locked, forId);
+  else if ('tier' in b.dataset) pressTier(b.dataset.tier, forId);
   else if (b.dataset.retire) pressRetire(b.dataset.retire);
-  else if (b.dataset.ui === 'inspect') { const id = selected(); openSheet(null); hud.showInquest(id, inquestOf(state, id, chain.verified)); }
-  else if (b.dataset.act && e.currentTarget.id === 'agent') press(b.dataset.act);
+  else if (b.dataset.ui === 'inspect') { const id = forId || selected(); openSheet(null); hud.showInquest(id, inquestOf(state, id, chain.verified)); }
+  else if (b.dataset.act && e.currentTarget.id === 'agent') press(b.dataset.act, forId);
 }
 for (const id of ['card', 'agent', 'office']) $(id).addEventListener('click', onPanelClick);
 
 // NEW AGENT: POST /agents. On 201 from this browser the sheet closes, the island irises into the Factory floor where
 // the line builds the robot (scene.buildRobot), then irises back; the created event's exterior script (the robot
 // rolls from the Factory door to the yard) plays meanwhile or after, so the robot ends in the yard either way.
-async function mint(spec) {
+// Build 4: opts.start -> once the badge exists, START it right away with its job (opts.brain), so the robot rolls out
+// of the Factory and goes straight to work.
+async function mint(spec, opts = {}) {
   if (source === 'replay') return { ok: false, error: 'This is a recording: the Factory is read-only.' };
   const { res, body, ok } = await post(`${cfg.api}/agents`, spec);
   if (!ok) return { ok: false, error: errText(res, body) };
   mintColor[spec.agent] = spec.color;
   loadAgents();
   openSheet(null);
-  buildFlow({ id: spec.agent, name: spec.name, color: spec.color, tier: spec.tier, tools: spec.tools });
+  const built = buildFlow({ id: spec.agent, name: spec.name, color: spec.color, tier: spec.tier, tools: spec.tools });
+  // build 4 (review): START once the line has built it and the iris is back on the island, so the robot is seen rolling
+  // out and walking to work (started at once, its first calls played while the island was hidden in the floor room)
+  if (opts.start && spec.job) { uiSel = spec.agent; built.finally(() => startAgent(spec.agent, spec.job, opts.brain)); }
   return { ok: true };
 }
 async function buildFlow(spec) {
@@ -390,7 +432,8 @@ scene.onLedgerRow?.(onRow);
 // the rooms read the island's state through these (B2: createRooms(ctx, hooks))
 const rosterRows = () => Object.values(state.agents).filter((a) => a.known).map((a) => ({
   agent: a.id, id: a.id, name: a.name, tier: a.tier, ceiling: a.ceiling, role: a.role, made_by: a.madeBy, madeBy: a.madeBy, color: a.color,
-  status: a.plate === 'revoked' ? 'REVOKED' : a.plate === 'stopped' || a.plate === 'kill' ? 'KILLED' : 'ACTIVE', plate: a.plate, at: a.at,
+  status: a.plate === 'revoked' ? (a.quarantined ? 'QUARANTINED' : 'REVOKED') : a.plate === 'kill' || (a.plate === 'stopped' && String(a.stopNote || '').startsWith('run stopped')) ? 'KILLED'
+    : (a.status && a.status !== 'ACTIVE' ? a.status : 'ACTIVE'), plate: a.plate, at: a.at, // user test: a finished job read KILLED on the boards
   allowed_tools: a.allowedTools.slice(), allowedTools: a.allowedTools.slice(), client_id: a.clientId,
 }));
 scene.setRoomHooks?.({ getLog: () => state.log, getRoster: rosterRows, getInquest: (id) => inquestOf(state, id, chain.verified), onRow, getChain: () => chainId });
@@ -405,18 +448,34 @@ async function rawInquest(id, report) {
   showJson(`Inquest · ${id} · computed in this browser`, report, source === 'replay' ? 'replay: computed from the recording by inquestOf() (the gateway computes the same from its chain)' : 'the gateway did not answer GET /agents/{id}/inquest: computed in this browser from the same rows');
 }
 
+// ---------- R: the recording and back (build 4: it used to be a one-way door into replay) ----------
+// live -> the recording (?replay=...); replay -> the live island (the replay parameter dropped, any other kept).
+// A click on the grey REPLAY badge does the same as R.
+function toggleReplay() {
+  const p = new URLSearchParams(location.search);
+  if (source === 'replay') p.delete('replay'); else p.set('replay', replayPath || 'fixture.json');
+  const q = p.toString();
+  location.href = location.pathname + (q ? `?${q}` : '') + location.hash;
+}
+$('mode').addEventListener('click', () => { if (source === 'replay') toggleReplay(); });
+
 // ---------- hide panels (H) ----------
 function naked(on) { document.body.classList.toggle('naked', on); hud.relayout(); }
 $('pill').addEventListener('click', () => naked(false));
 
 // ---------- keyboard, robot and building clicks ----------
 addEventListener('keydown', (e) => {
-  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) {
+    if (e.key === 'Escape' && e.target.tagName === 'SELECT') e.target.blur(); // build 4 (review): Esc still closes a sheet from the job dropdown
+    else return;
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key;
+  if (/^[tTaAfF?]$/.test(k) && document.body.classList.contains('naked')) naked(false); // user test: sheets opened invisibly while hidden
   if (k === 't' || k === 'T') { toggleSheet('table'); hud.renderTable(state); }
   else if (k === 'a' || k === 'A') { if (!$('arch').innerHTML) $('arch').innerHTML = ARCH_SHEET; toggleSheet('arch'); }
-  else if (k === 'r' || k === 'R') { const p = replayPath || 'fixture.json'; location.search = `?replay=${encodeURIComponent(p)}`; }
+  else if (k === 'r' || k === 'R') toggleReplay();
+  else if (k === 'c' || k === 'C') { if (scene.recenter?.()) state = { ...state, ticker: 'camera back to the centre (C)' }; render(); }
   else if (k === 'g' || k === 'G') { if (curRoom()) leaveRoom(); else enterRoom('gatehouse'); }
   else if (k === 'h' || k === 'H') naked(!document.body.classList.contains('naked'));
   else if (k === 'f' || k === 'F') toggleSheet('office');
@@ -424,8 +483,9 @@ addEventListener('keydown', (e) => {
   else if (k === 'Escape') {
     const open = SHEETS.some((s) => $(s).classList.contains('on'));
     if (open) openSheet(null);
+    else if (curRoom()) leaveRoom(); // user test: a room hides the inquest panel, so Esc leaves the room first
     else if (hud.inquestOpen()) { hud.closeInquest(); render(); } // the agent card comes back
-    else if (document.body.classList.contains('naked')) naked(false); else leaveRoom();
+    else if (document.body.classList.contains('naked')) naked(false);
   }
 });
 // a click (not the end of a drag that turned the camera): a robot first, then a building
@@ -443,4 +503,4 @@ stage.addEventListener('click', (e) => {
 
 render(); strip();
 if (source === 'replay') replay(replayPath); // replay keeps tiers.js: the same table, and no gateway to ask
-else { loadTiers(); loadAgents(); loadMode(); poll(); }
+else { loadTiers(); loadJobs(); loadAgents(); loadMode(); poll(); }

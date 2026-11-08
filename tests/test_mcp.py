@@ -183,7 +183,9 @@ def test_island_facing_routes(client: TestClient) -> None:
     agents = client.get("/agents").json()
     assert [a["agent"] for a in agents] == ["research-bot", "ops-bot"]
     assert set(agents[0]) == {"agent", "name", "client_id", "status", "allowed_tools", "color",
-                              "tier", "ceiling", "role", "made_by", "created_at"}  # build 3 added the last five
+                              "tier", "ceiling", "role", "made_by", "created_at",  # build 3 added these five
+                              "job", "running"}  # the Factory's runner: the badge's job, and a live launcher of ours
+    assert (agents[0]["job"], agents[0]["running"]) == (None, False)
     assert client.get("/healthz").json() == {"ok": True, "mode": "local", "tools_mode": "local",
                                              "token_mode": "local"}
     js = client.get("/config.js").text

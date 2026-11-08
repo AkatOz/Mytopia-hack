@@ -23,7 +23,8 @@ test('the demo story ends in the right state (no fire anywhere)', () => {
   const rb = s.agents['research-bot'], ob = s.agents['ops-bot'];
   assert.equal(s.cursor, 21);
   assert.equal(s.blockedTotal, 7);
-  assert.equal(rb.plate, 'active');             // restored at seq 17
+  assert.equal(rb.plate, 'none');               // restored at seq 17, after its run stopped at 16: badge back, no run (build 4: START can be pressed)
+  assert.equal(rb.running, false);
   assert.equal(rb.revokeMs, null);              // cleared on restore
   assert.equal(rb.at, 'plaza');                 // walked out of the pen on restore
   assert.equal(ob.plate, 'stopped');            // exit 0
@@ -83,7 +84,7 @@ test('kill_requested freezes the robot and sends the chief', () => {
 
 test('a run that ends by itself is not shown as killed and walks back to the hatch', () => {
   const { all } = run(fixture);
-  assert.ok(all[20].some((f) => f.kind === 'banner' && f.text === 'RUN ENDED'));
+  assert.ok([...all[20], ...all[20].filter((f) => f.kind === 'script').flatMap((f) => f.steps).filter((st) => st && st.fx).map((st) => st.fx)].some((f) => f.kind === 'banner' && f.text === 'RUN ENDED')); // the banner plays in the robot's queue
   assert.ok(!all[20].some((f) => f.kind === 'powerDown'));
   const steps = scriptOf(all[20]).steps;
   assert.ok(steps.some((st) => st.walk === 'hatch'));
@@ -198,8 +199,13 @@ test('buttons only acknowledge on the matching event', () => {
   assert.ok(all[8].some((f) => f.kind === 'ack' && f.action === 'revoke'));
   assert.ok(all[13].some((f) => f.kind === 'ack' && f.action === 'kill'));
   assert.ok(all[16].some((f) => f.kind === 'ack' && f.action === 'restore'));
-  const acks = all.flat().filter((f) => f.kind === 'ack');
+  const acks = all.flat().filter((f) => f.kind === 'ack' && !f.action.startsWith('start:'));
   assert.equal(acks.length, 3);
+  // build 4: START's "sent..." clears on that agent's run_started, and on nothing else
+  const starts = all.flat().filter((f) => f.kind === 'ack' && f.action.startsWith('start:'));
+  const runStarts = fixture.filter((e) => e.decision === 'run_started');
+  assert.equal(starts.length, runStarts.length);
+  assert.deepEqual(starts.map((f) => f.action), runStarts.map((e) => 'start:' + e.agent));
 });
 
 test('run_stopped marked "killed by harness" counts as a kill even without the kill_requested row', () => {
@@ -215,7 +221,7 @@ test('a gateway "exit 0 (exited)" run_stopped is RUN ENDED', () => {
   let s = initialState();
   for (const e of fixture.slice(17, 20)) s = apply(s, e).state;
   const r = apply(s, { ...fixture[20], reason: 'exit 0 (exited)', args_summary: 'pid=5210 exited' });
-  assert.ok(r.effects.some((f) => f.kind === 'banner' && f.text === 'RUN ENDED'));
+  assert.ok([...r.effects, ...r.effects.filter((f) => f.kind === 'script').flatMap((f) => f.steps).filter((st) => st && st.fx).map((st) => st.fx)].some((f) => f.kind === 'banner' && f.text === 'RUN ENDED'));
   assert.ok(!r.effects.some((f) => f.kind === 'powerDown'));
 });
 

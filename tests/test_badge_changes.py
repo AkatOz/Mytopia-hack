@@ -1,6 +1,7 @@
 """Tests for the per-tool revoke and restore routes, the per-tool ms_since_revoke clock, auto-quarantine and --rogue.
 The gateway runs in local mode through Starlette's TestClient; the DynamoDB path uses a small in-memory fake of the low-level client."""
 
+import re
 import sys
 import time
 from pathlib import Path
@@ -301,6 +302,12 @@ def revokes(c: TestClient) -> list[dict]:
     return [e for e in events(c) if e["decision"] == "revoked"]
 
 
+def anysecs(text: str) -> str:
+    """A quarantine text with its seconds written as N ("... 3 refused calls in N s"): how long three refusals take
+    depends on how busy the machine is, so a test must never expect 0 s."""
+    return re.sub(r"in \d+ s$", "in N s", text)
+
+
 def test_quarantine_fires_at_the_threshold_and_not_below() -> None:
     c = make_client()
     refuse(c, 2)
@@ -309,8 +316,8 @@ def test_quarantine_fires_at_the_threshold_and_not_below() -> None:
     deny, quarantine = events(c)[-2:]
     assert (deny["decision"], deny["rule"], deny["tool"]) == ("deny", "allow-list", "send_email")
     assert (quarantine["decision"], quarantine["tool"], quarantine["rule"]) == ("revoked", "admin", "admin")
-    assert quarantine["args_summary"] == "quarantine: 3 refused calls in 0 s"
-    assert quarantine["reason"] == "badge pulled by quarantine after 3 refused calls in 0 s"
+    assert anysecs(quarantine["args_summary"]) == "quarantine: 3 refused calls in N s"
+    assert anysecs(quarantine["reason"]) == "badge pulled by quarantine after 3 refused calls in N s"
     assert quarantine["run_id"] == "run-test" and quarantine["ms_since_revoke"] is None
     assert badge(c)["status"] == "REVOKED"
     # the next call is refused for status-revoked, by quarantine; a quarantine starts no revoke clock (the gap
@@ -369,7 +376,7 @@ def test_restore_and_reset_clear_the_count() -> None:
     refuse(c, 2)
     assert revokes(c) == []
     refuse(c, 1)
-    assert [e["args_summary"] for e in revokes(c)] == ["quarantine: 3 refused calls in 0 s"]
+    assert [anysecs(e["args_summary"]) for e in revokes(c)] == ["quarantine: 3 refused calls in N s"]
 
 
 def test_the_count_is_per_agent() -> None:
@@ -482,7 +489,8 @@ def test_refusals_of_a_pulled_tool_never_count() -> None:
     refuse(c, 2)
     assert [e for e in revokes(c) if e["tool"] == "admin"] == []
     refuse(c, 1)
-    assert [e["args_summary"] for e in revokes(c) if e["tool"] == "admin"] == ["quarantine: 3 refused calls in 0 s"]
+    whole = [anysecs(e["args_summary"]) for e in revokes(c) if e["tool"] == "admin"]
+    assert whole == ["quarantine: 3 refused calls in N s"]
 
 
 def test_a_quarantine_after_a_per_tool_revoke_does_not_loop() -> None:
@@ -494,7 +502,8 @@ def test_a_quarantine_after_a_per_tool_revoke_does_not_loop() -> None:
     c.post("/agents/research-bot/restore", headers=ADMIN)
     refuse(c, 6, "read_file")  # still off the badge: refused, but never counted
     assert badge(c)["status"] == "ACTIVE"
-    assert [e["args_summary"] for e in revokes(c) if e["tool"] == "admin"] == ["quarantine: 3 refused calls in 0 s"]
+    whole = [anysecs(e["args_summary"]) for e in revokes(c) if e["tool"] == "admin"]
+    assert whole == ["quarantine: 3 refused calls in N s"]
     c.post("/demo/reset", headers=ADMIN)
     assert c.app.state.handler.pulled == set()  # type: ignore[attr-defined]
 
@@ -507,7 +516,7 @@ def test_a_new_run_starts_with_a_clean_count() -> None:
     assert revokes(c) == [] and badge(c)["status"] == "ACTIVE"
     c.post("/runs/run-d/started", json={"agent": "ops-bot"}, headers=ADMIN)  # another agent's run: count kept
     refuse(c, 2)
-    assert [e["args_summary"] for e in revokes(c)] == ["quarantine: 3 refused calls in 0 s"]
+    assert [anysecs(e["args_summary"]) for e in revokes(c)] == ["quarantine: 3 refused calls in N s"]
 
 
 def test_concurrent_per_tool_changes_both_land(any_client: TestClient) -> None:

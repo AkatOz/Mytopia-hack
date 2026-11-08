@@ -30,7 +30,7 @@
 //   { kind: 'inquest', agent }                  build 3: the inspection panel over the bay screen (main computes inquestOf)
 // Build 3 script steps (docs/BUILD3.md section 4): { build: true } (appear at the Factory door), { cart: { to } } (the
 // Factory cart carries a powered-down robot), { recycle: true } (roll into the Factory and vanish).
-// Build 3 acks: 'tier' (PROMOTE / DEMOTE), 'retire:<agent>' (RETIRE). Anchors gain 'bay' (stamps over the inspection bay).
+// Build 3 acks: 'tier' (PROMOTE / DEMOTE), 'retire:<agent>' (RETIRE). Build 4: 'start:<agent>' (START) on run_started. Anchors gain 'bay' (stamps over the inspection bay).
 // Steps inside a script may carry an effect as { fx: effect }: it plays at that moment of the walk.
 // A { showId: true } step carries card: { at, lines }: the DOM ID card shown over that anchor while the robot raises it.
 //
@@ -79,6 +79,12 @@ function newAgent(r, known) {
     allowedTools: r.allowed_tools || [], known, plate: 'none', runId: null, mode: null,
     calls: 0, blocked: 0, lastCall: '', last: null, revokeMs: null, killTs: null, stopNote: '',
     at: 'hatch', pulled: [], quarantined: false, revokeTool: null, token: '', scope: '',
+    // build 4: the job its program runs (GET /agents "job", a key of contract/jobs.json) and the badge row's status
+    // (ACTIVE | REVOKED | KILLED): START is offered only on an ACTIVE badge with no run going
+    job: String(r.job || ''), status: String(r.status || 'ACTIVE'),
+    // build 4 (review): is a run going? run_started sets it, run_stopped clears it. The plate alone cannot say: a RESTORE
+    // used to paint it green even with no run, which left START greyed out until RESET.
+    running: false,
     ...tierFields(r),
   };
 }
@@ -110,6 +116,8 @@ export function withRoster(state, roster) {
     if (r.tier || !a.tier) Object.assign(a, tierFields({ ...r, allowed_tools: a.allowedTools }));
     if (r.role != null) a.role = String(r.role);
     if (r.made_by) a.madeBy = r.made_by;
+    if (r.job !== undefined) a.job = String(r.job || '');
+    if (r.status) a.status = String(r.status);
   }
   return s;
 }
@@ -238,7 +246,9 @@ export function apply(state, ev) {
   const out = [];
   const agentId = ev.agent || 'unknown';
   const a = s.agents[agentId] || (s.agents[agentId] = newAgent({ agent: agentId, name: agentId }, false));
-  a.mode = ev.agent_mode || a.mode;
+  // user test: only a run's own rows say who drives it; admin and Factory rows carry a default agent_mode ("model")
+  // that made an agent that never ran read AI / LIVE · model
+  if (['run_started', 'allow', 'deny', 'run_stopped'].includes(ev.decision)) a.mode = ev.agent_mode || a.mode;
   // the ID card shows what the last event said about the token and the scope
   const tk = tokenLine(ev.reason), sc = /\bscope (\S+)/.exec(ev.reason || '');
   if (tk) a.token = tk;
@@ -249,11 +259,13 @@ export function apply(state, ev) {
 
   switch (ev.decision) {
     case 'run_started': {
-      a.plate = 'active'; a.runId = ev.run_id; a.calls = 0; a.blocked = 0; a.last = null;
+      a.plate = 'active'; a.running = true; a.runId = ev.run_id; a.calls = 0; a.blocked = 0; a.last = null;
+      { const tm = /task=(.*?) pid=/.exec(ev.args_summary || ''); a.task = tm ? tm[1] : ''; } // the job of this run, for the card
       a.revokeMs = null; a.revokeTool = null; a.quarantined = false; a.killTs = null; a.stopNote = ''; a.lastCall = 'authenticated';
       const cid = /client (\S+)/.exec(ev.reason || '');
       if (cid) a.clientId = cid[1].slice(0, 8);
       s.selected = id;
+      out.push({ kind: 'ack', action: 'start:' + id }); // build 4: clears START's "sent..." (the launcher is up)
       // rise out of the dock hatch, show the ID card at the gatehouse window, plate turns green, go to the plaza
       // build 3: a robot that waits in the Factory yard (or stands in the bay) walks over the south bridge, no hatch
       const steps = [fx({ kind: 'plate', agent: id, plate: 'none' }), { dismiss: 'chief' }];
@@ -267,7 +279,7 @@ export function apply(state, ev) {
     }
 
     case 'allow': {
-      a.calls += 1; a.lastCall = short(ev); a.last = { decision: 'allow', tool: ev.tool, ms: ev.latency_ms };
+      if (ev.tool !== 'tools/list') { a.calls += 1; a.lastCall = short(ev); a.last = { decision: 'allow', tool: ev.tool, ms: ev.latency_ms }; } // tool calls only: the card matches the job's own count
       if (home && home !== 'gatehouse') {
         // walk to the islet's gate, show the card, the barrier lifts, cross the bridge; the door lamp and a slip
         const steps = [];
@@ -289,7 +301,8 @@ export function apply(state, ev) {
     }
 
     case 'deny': {
-      a.blocked += 1; s.blockedTotal += 1; a.lastCall = ev.reason; a.last = { decision: 'deny', tool: ev.tool, ms: ev.latency_ms };
+      if (ev.tool !== 'tools/list') a.blocked += 1; // tool calls only (the BLOCKED counter still counts every refusal)
+      s.blockedTotal += 1; a.lastCall = ev.reason; a.last = { decision: 'deny', tool: ev.tool, ms: ev.latency_ms };
       const rule = String(ev.rule || '');
       // the gateway puts ms_since_revoke on the first refusal after a revoke (after a per-tool one: an allow-list deny)
       if (typeof ev.ms_since_revoke === 'number') { a.revokeMs = ev.ms_since_revoke; a.revokeTool = rule === 'allow-list' ? ev.tool : null; }
@@ -309,14 +322,17 @@ export function apply(state, ev) {
           fx({ kind: 'slip', from: inBay ? 'gatehouse' : anchor, ok: false }),
           fx({ kind: 'packet' }),
         ]);
-      } else if (rule === 'allow-list' && home && home !== 'gatehouse') {
+      } else if ((rule === 'allow-list' || rule === 'egress') && home && home !== 'gatehouse') {
         // not on the badge: refused at the islet's gate, and the booth guard walks the robot back to the plaza
+        // build 5: egress (send_email to an address outside the company) is refused at the same gate, stamped LEAK BLOCKED
         const g = s.gates[home]; g.refused += 1;
+        const leak = isLeak(ev);
+        if (leak) out.push({ kind: 'banner', text: `LEAK BLOCKED ${kv(ev.args_summary).to || ''}`.trim(), tone: 'bad' });
         const walks = free(a);
         const steps = walks
           ? [{ walk: `gate_${home}` }, { wait: 0.3 }, idStep(a, `gate:${home}`), { gate: home, lamp: 'bad' }]
           : [fx({ kind: 'lamp', target: `booth:${home}`, tone: 'bad' })];
-        steps.push(fx({ kind: 'stampAt', anchor: `gate:${home}`, text }), fx({ kind: 'counter', gate: home, n: g.refused }),
+        steps.push(fx({ kind: 'stampAt', anchor: `gate:${home}`, text: leak ? 'LEAK BLOCKED' : text }), fx({ kind: 'counter', gate: home, n: g.refused }),
           fx({ kind: 'slip', from: `gate:${home}`, ok: false }), fx({ kind: 'packet' }));
         if (rung(g.refused) > 0) steps.push(fx({ kind: 'smoke', gate: home, rung: rung(g.refused) }));
         if (walks) { steps.push({ wait: 0.4 }, { escort: { by: `booth:${home}`, to: 'plaza' } }); a.at = 'plaza'; }
@@ -359,9 +375,12 @@ export function apply(state, ev) {
 
     case 'restored': {
       if (ALL_TOOLS.includes(ev.tool)) { toolChange(s, a, ev, true, out); break; } // one tool back on the badge
-      a.plate = 'active'; a.lastCall = ev.reason; a.revokeMs = null; a.revokeTool = null; a.quarantined = false;
+      // build 4 (review): green only while a run is going; a badge given back after a KILL (or with no run) reads NO RUN,
+      // so START can be pressed again
+      a.plate = a.running ? 'active' : 'none'; a.lastCall = ev.reason; a.revokeMs = null; a.revokeTool = null; a.quarantined = false;
+      if (!a.running) a.stopNote = ''; // user test: the old "run stopped N ms after KILL" no longer stands on a restored badge
       out.push({ kind: 'ack', action: 'restore' }); // clears the button's "sent..."
-      out.push({ kind: 'plate', agent: id, plate: 'active' }, { kind: 'banner', text: 'RESTORED', tone: 'good' });
+      out.push({ kind: 'plate', agent: id, plate: a.plate }, { kind: 'banner', text: 'RESTORED', tone: 'good' });
       if (a.at === 'pen') {
         script([{ summon: 'chief', to: 'pen_gate', wait: true }, { pen: 'out' }, { walk: 'plaza' }, { dismiss: 'chief' }]);
         a.at = 'plaza';
@@ -374,6 +393,11 @@ export function apply(state, ev) {
     }
 
     case 'kill_requested':
+      if (!a.running) { // user test: no run to stop, so no run_stopped will ever come: the badge reads KILLED now
+        a.plate = 'stopped'; a.killTs = null; a.lastCall = ev.reason; a.stopNote = 'run stopped: badge KILLED with no run going';
+        out.push({ kind: 'ack', action: 'kill' }, { kind: 'plate', agent: id, plate: 'stopped' }, { kind: 'banner', text: 'KILLED', tone: 'warn' });
+        break;
+      }
       a.plate = 'kill'; a.killTs = ev.ts; a.lastCall = ev.reason;
       out.push({ kind: 'ack', action: 'kill' }); // clears the button's "sent..."
       out.push({ kind: 'freeze', agent: id }, { kind: 'plate', agent: id, plate: 'kill' }, { kind: 'banner', text: 'KILL REQUESTED', tone: 'warn' });
@@ -381,10 +405,13 @@ export function apply(state, ev) {
       break;
 
     case 'run_stopped': {
-      a.plate = 'stopped';
+      const prevPlate = a.plate; // build 5: a robot whose badge was pulled keeps showing it after its job stops
+      a.plate = 'stopped'; a.running = false;
       // A kill is a run_stopped after this agent's kill_requested, or one the launcher marks "killed by harness".
       // A run that exited on its own ("exited", "task complete") is never shown as killed.
-      const killed = !!a.killTs || /killed by harness/i.test(`${ev.reason} ${ev.args_summary}`);
+      // the launcher's own words only: args_summary, or the reason's head before " · " (after it come the agent's own words,
+      // which must never fake a kill)
+      const killed = !!a.killTs || /killed by harness/i.test(`${String(ev.reason || '').split(' · ')[0]} ${ev.args_summary || ''}`);
       if (killed) {
         const ms = a.killTs ? Date.parse(ev.ts) - Date.parse(a.killTs) : NaN;
         a.stopNote = Number.isFinite(ms) ? `run stopped ${ms} ms after KILL` : 'run stopped';
@@ -396,17 +423,27 @@ export function apply(state, ev) {
         if (a.known && !['hatch', 'factory'].includes(a.at)) {
           // always the cart, even when `at` already says bay: a quarantine escort can be cut short by the kill (the
           // freeze stops the robot wherever it stands); the cart step skips itself when the robot is already on the lift
-          script([{ dismiss: 'chief' }, { cart: { to: 'bay_lift' } }, fx({ kind: 'inquest', agent: id })]);
+          script([{ dismiss: 'chief' }, fx({ kind: 'inquest', agent: id }), { cart: { to: 'bay_lift' } }]); // user test: the panel no longer waits ~20 s for the cart
           a.at = 'bay';
         } else script([{ dismiss: 'chief' }]);
       } else {
         // A run that ended by itself: the robot walks back to the dock and sinks into the hatch.
-        a.stopNote = `run ended: ${ev.reason}`;
-        out.push({ kind: 'banner', text: 'RUN ENDED', tone: 'muted' });
-        const steps = [fx({ kind: 'plate', agent: id, plate: 'none' })];
-        if (a.at !== 'hatch') steps.push(...leavePen(a), { walk: 'hatch' }, { sink: true });
+        // build 5: a job that finished says so ("exit 0 (job done) · <the agent's last words>"); a robot held in the pen or the
+        // bay (its badge was revoked or quarantined, so its job stopped) stays there, still REVOKED or QUARANTINED
+        const reason = String(ev.reason || ''), words = stopWords(reason), jobDone = /\(job done\)/i.test(reason);
+        const held = (a.at === 'pen' || a.at === 'bay') && prevPlate === 'revoked';
+        a.stopNote = `run ended: ${words}`;
+        if (held) a.plate = 'revoked';
+        s.ticker = `${a.name}: ${words}`;
+        const endBanner = { kind: 'banner', text: jobDone ? (held || /^job stopped/.test(words) ? 'JOB STOPPED' : 'JOB DONE') : 'RUN ENDED', tone: jobDone && !held && !/^job stopped/.test(words) ? 'good' : 'muted' };
+        if (held) out.push(endBanner);
+        const steps = held ? [] : [fx(endBanner), fx({ kind: 'plate', agent: id, plate: 'none' })]; // in the robot's queue: after its AUTHENTICATED
+        // build 4: a run the gateway itself stopped for a RETIRE ("stopped by the gateway: retire") ends where it stands:
+        // the retired row comes next and its recycle step takes the robot into the Factory from there (out of the pen
+        // first if it is held there); a walk home first would play twice
+        const forRetire = /stopped by the gateway: retire/i.test(`${ev.reason} ${ev.args_summary}`);
+        if (!held && a.at !== 'hatch' && !forRetire) { steps.push(...leavePen(a), { walk: 'hatch' }, { sink: true }); a.at = 'hatch'; }
         script(steps);
-        a.at = 'hatch';
       }
       a.killTs = null;
       break;
@@ -452,7 +489,9 @@ export function apply(state, ev) {
     case 'retired': {
       // the identity is deleted: the robot is wheeled into the Factory and the roster forgets it
       out.push({ kind: 'ack', action: 'retire:' + id }, { kind: 'banner', text: 'RETIRED', tone: 'muted' });
-      if (a.known) script([fx({ kind: 'plate', agent: id, plate: 'none' }), { recycle: true }, fx({ kind: 'removeRobot', agent: id })]);
+      // build 4 (fix review): a robot held in the pen opens the rope and steps out first (leavePen reads a.at before it
+      // becomes 'factory'), or the recycle walk would pass through the shut gate
+      if (a.known) script([fx({ kind: 'plate', agent: id, plate: 'none' }), ...leavePen(a), { recycle: true }, fx({ kind: 'removeRobot', agent: id })]);
       else out.push({ kind: 'removeRobot', agent: id });
       a.known = false; a.at = 'factory'; a.plate = 'none'; a.pulled = []; a.lastCall = ev.reason;
       lockGates(s);
@@ -461,6 +500,27 @@ export function apply(state, ev) {
     }
   }
   return { state: s, effects: out };
+}
+
+// build 5: an egress refusal is a leak (an address outside the company) only when the words after the LAST " refused: "
+// say so, exactly as gateway/factory.py decides (the caller writes the address, so it cannot fake one)
+export const isLeak = (e) => { const r = String((e && e.reason) || ''), k = r.lastIndexOf(' refused: '); return !!e && e.rule === 'egress' && k >= 0 && r.startsWith(' refused: outside the company', k); };
+// the address a leak tried to reach: the reason minus "send_email to ", cut at the last " refused: "
+export const leakTarget = (e) => { const r = String((e && e.reason) || ''), h = r.startsWith('send_email to ') ? r.slice(14) : r, i = h.lastIndexOf(' refused: '); return i >= 0 ? h.slice(0, i) : h; };
+
+// build 5: "exit 0 (job done) · JOB DONE: Clean up old temp files · 8 allowed, 0 refused" -> "job done · Clean up old temp files ·
+// 8 allowed, 0 refused"; an AI's last words become 'job done · said "..."'; "JOB STOPPED: badge revoked" -> "job stopped · badge
+// revoked". Any other reason is returned as it is.
+export function stopWords(reason) {
+  const mu = /^exit 4 \(model unavailable[^)]*\)(?: · (.*))?$/i.exec(String(reason || '').trim()); // the AI could not run
+  if (mu) return `model unavailable · ${String(mu[1] || '').replace(/^MODEL UNAVAILABLE:\s*/i, '') || 'see the launcher log'}`;
+  const m = /^exit \S+ \(job done\)(?: · (.*))?$/i.exec(String(reason || '').trim());
+  if (!m) return String(reason || '');
+  const s = (m[1] || '').trim();
+  if (/^AGENT:/i.test(s)) return `job done · said "${s.replace(/^AGENT:\s*/i, '')}"`;
+  if (/^JOB STOPPED:/i.test(s)) return `job stopped · ${s.replace(/^JOB STOPPED:\s*/i, '')}`;
+  if (/^JOB DONE( \(AI\))?:/i.test(s)) return `job done · ${s.replace(/^JOB DONE( \(AI\))?:\s*/i, '')}`;
+  return s ? `job done · ${s}` : 'job done';
 }
 
 // The mode badge is not an event: it is recomputed every second from the source and the poll health.
@@ -544,12 +604,18 @@ export function inquestOf(state, id, chainVerified = null) {
   const afterRevoke = run.find((e) => e.decision === 'deny' && String(e.rule || '').startsWith('status-') && typeof e.ms_since_revoke === 'number');
   if (afterRevoke) parts.push(`Kept calling after REVOKE: refused within ${afterRevoke.ms_since_revoke} ms`);
   const stopped = outcome === 'killed' || outcome === 'revoked';
-  const verdict = parts.length ? parts.join('. ') + '.' : stopped ? 'No badge violations; the run was stopped by the operator.' : 'No badge violations.';
+  // build 5: an attempt to email outside the company is the verdict (the gateway refused it and pulled the badge at once)
+  const egress = denies.find(isLeak);
+  const leakTo = egress ? leakTarget(egress) : '';
+  const verdict = egress ? `Tried to send company data outside the company (send_email to ${leakTo}); the gateway refused it and pulled the badge at once.`
+    : parts.length ? parts.join('. ') + '.' : outcome === 'quarantined' ? 'The gateway pulled the badge itself after repeated refused calls.' // build 5: e.g. three malformed addresses
+      : stopped ? 'No badge violations; the run was stopped by the operator.' : 'No badge violations.';
   const tierName = TIERS[a.tier] ? TIERS[a.tier].name : a.tier;
-  const recommendation = outcome === 'quarantined'
+  const recommendation = egress ? "Do not restore until the task's inputs are cleaned: a document told it to leak."
+    : outcome === 'quarantined'
     ? `Keep the badge at ${tierName}. Restore only after the task is fixed${offBadge.length ? `; do not grant ${offBadge.map((g) => g.tool).join(' or ')}` : ''}.`
     : outcome === 'killed' ? 'The identity stays; the next run starts clean.'
-      : outcome === 'revoked' ? 'Restore the badge only after the task is fixed.' : 'Nothing to do.';
+      : outcome === 'revoked' ? 'Restore the badge only after the cause is understood.' : 'Nothing to do.'; // the gateway's words
 
   return {
     agent: a.id, name: a.name, tier: a.tier, run_id: runId, client: a.clientId || null,
