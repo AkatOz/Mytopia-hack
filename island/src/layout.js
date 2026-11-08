@@ -121,4 +121,4 @@ export function spotOf(slot, place) {
 // Integrator, 2026-11-07: radius 29 / target [0,-1.5,-3] cut the FILES tower top and the Mail islet off the top of a
 // 1280x720 screen. Measured in the browser: radius 34 aimed at [1, 2, -6] keeps the tower tip (y 26), the Mail cottage,
 // the GitHub islet's edge and the Admin islet's near cliff on screen, with no door or gate under a HUD panel.
-export const FRAMING = { target: [1, 2, -6], radius: 34, minZoom: 0.7, maxZoom: 3 };
+export const FRAMING = { target: [2, 2, -5], radius: 32, minZoom: 0.7, maxZoom: 3 }; // Claude, 4:15 PM: measured in headless screenshots; r 34 left the scene 15 percent too small, r 30 cut the tower
