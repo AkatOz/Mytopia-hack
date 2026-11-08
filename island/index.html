@@ -65,6 +65,14 @@ three-d-stage:not(:defined) { visibility: hidden; }
 .chip.on { background: var(--good); color: #fff; }
 .chip.off { background: var(--off); color: var(--dim); border-color: #a39a8c; text-decoration: line-through; }
 .chip.held { background: var(--paper); color: var(--bad); border-style: dashed; text-decoration: line-through; }
+/* round two: live, an allowed or pulled chip is a button (it only POSTs); a pulled tool is struck red "pulled" */
+button.chip { display: block; width: 100%; margin: 0; font: inherit; font-family: var(--vt); font-size: 16px; cursor: pointer; }
+button.chip.on:hover, button.chip.held:hover { box-shadow: inset 0 0 0 2px var(--paper); }
+button.chip:disabled { cursor: wait; }
+.chip.pulled { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+.chip.pulled .nm { text-decoration: line-through; }
+.chip small { display: block; font-size: 15px; line-height: 1; text-decoration: none; }
+.chip.on small { color: #fff; }
 #card .row { font-family: var(--vt); font-size: 20px; line-height: 1.15; }
 #card .row b { font-weight: 400; color: var(--ink); background: var(--cream); padding: 0 4px; }
 #card .note { font-family: var(--vt); font-size: 19px; line-height: 1.15; min-height: 22px; }
@@ -85,6 +93,8 @@ three-d-stage:not(:defined) { visibility: hidden; }
 #ops button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 #ops button.save { background: var(--cream); font-size: 13px; width: calc(100% - 4px); }
 #ops .hint { font-family: var(--vt); font-size: 15px; color: var(--dim); margin-top: 6px; line-height: 1.1; }
+#ops .hint b { font-weight: 400; color: var(--ink); }
+#ops .hint span { white-space: nowrap; } /* a key and its word stay on one line at 800 px */
 #strip { right: 12px; bottom: 60px; width: 206px; padding: 4px 10px 6px; }
 #strip h4 { margin: 0 0 1px; font-size: 14px; font-weight: 600; letter-spacing: 1px; }
 #strip .kv { display: flex; justify-content: space-between; font-family: var(--vt); font-size: 18px; line-height: 1.15; }
@@ -122,6 +132,10 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
 .ledger-panel tr.t-admin .dec { color: #f2c46b; } .ledger-panel tr.t-harness .dec { color: #cfd6d0; }
 .ledger-panel tr.newest td { background: #4a4a3a; color: #fbf7ee; }
 .ledger-panel td.empty { color: #b3aca2; padding-top: .6em; }
+/* round two: a row opens its raw JSON (click, or Enter on the focused row); the panel itself lets clicks through */
+.ledger-panel tbody tr[data-seq] { pointer-events: auto; cursor: pointer; outline: none; }
+.ledger-panel tbody tr[data-seq]:hover td, .ledger-panel tbody tr[data-seq]:focus td { background: #45524a; }
+.ledger-panel tbody tr[data-seq]:focus td:first-child { box-shadow: inset .2em 0 0 #f2c46b; }
 .chain-panel { background: var(--paper); color: var(--ink); padding: .4em .6em; border: 2px solid var(--ink); }
 .chain-panel .cp-title { font-family: var(--px); font-weight: 600; font-size: 1.25em; }
 .chain-panel .cp-sub { color: var(--dim); font-size: .8em; margin-bottom: .2em; }
@@ -140,6 +154,11 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
 .tag.place { background: var(--ink); color: var(--cream); font-size: 20px; border-color: var(--ink); letter-spacing: 1px; }
 .stamp { position: absolute; display: none; transform-origin: 50% 50%; font: 600 30px var(--px); line-height: 1.1; color: var(--bad); border: 4px solid var(--bad); padding: 0 10px; background: var(--paper); white-space: nowrap; animation: stamp 1.6s ease-out forwards; }
 @keyframes stamp { 0% { transform: rotate(-6deg) scale(1.15); opacity: 0; } 10% { transform: rotate(-6deg) scale(1); opacity: 1; } 80% { opacity: 1; } 100% { transform: rotate(-6deg) scale(1); opacity: 0; } }
+/* round two: the ID card a robot raises at a gate, the window or the pen (paper, 220 px, 1.2 s; stripe in its colour) */
+.idcard { position: absolute; display: none; width: 220px; background: var(--paper); border: 3px solid var(--ink); border-top: 9px solid #e0b347; box-shadow: 3px 3px 0 var(--ink); padding: 2px 7px 4px; font-family: var(--vt); font-size: 18px; line-height: 1.1; animation: idcard 1.2s ease-out forwards; }
+.idcard[data-color=sage] { border-top-color: #9cc29c; }
+.idcard .nw { white-space: nowrap; } /* a long token line wraps at its " · ", never inside "expires in 243 s" */
+@keyframes idcard { 0% { transform: translateY(8px); opacity: 0; } 12% { transform: translateY(0); opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; } }
 .bincount { position: absolute; display: none; font: 600 17px var(--px); line-height: 1.2; background: var(--bad); color: #fff; border: 2px solid var(--ink); padding: 0 8px; white-space: nowrap; }
 
 /* ---------- T table and robot JSON ---------- */
@@ -152,6 +171,18 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
 .sheet td:nth-child(2) { white-space: nowrap; }
 .sheet .allow { color: var(--good); } .sheet .deny { color: var(--bad); }
 .sheet pre { font-family: var(--vt); font-size: 18px; white-space: pre-wrap; margin: 0; }
+.sheet .foot:empty { display: none; }
+.sheet .foot { font-family: var(--vt); font-size: 19px; color: var(--dim); margin: 8px 0 0; border-top: 1px solid var(--line); padding-top: 4px; }
+/* the architecture sheet (key A): the drawing at 1:1 (960 px) above the picture-to-step table */
+#arch { inset: 10px auto 10px 50%; transform: translateX(-50%); width: min(988px, calc(100vw - 20px)); padding: 8px 12px; }
+#arch h3 { font-size: 22px; margin: 0 0 4px; display: flex; justify-content: space-between; align-items: baseline; }
+#arch h3 .dim { font: 18px var(--vt); }
+#arch .arch-svg { display: block; width: 100%; max-width: 960px; height: auto; }
+#arch .arch-cap { font: 600 16px var(--px); color: var(--dim); margin: 6px 0 2px; }
+#arch table.arch-map { width: 100%; border-collapse: collapse; table-layout: fixed; font-family: var(--vt); font-size: 19px; }
+#arch table.arch-map td { border: 2px solid var(--ink); padding: 2px 6px; vertical-align: top; line-height: 1.1; white-space: normal; } /* not the T table's nowrap 2nd column */
+#arch table.arch-map tr.step td { background: var(--good-bg); }
+#arch .arch-limits { font-family: var(--vt); font-size: 19px; line-height: 1.15; margin: 6px 0 0; }
 
 /* ---------- about 800 px wide (the terminal takes the right 38 percent of the projector) ---------- */
 @media (max-width: 900px) {
@@ -161,7 +192,7 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
   #card .tabs { margin-bottom: 3px; } #card .tabs button { font-size: 12px; }
   #card .sub { font-size: 15px; } #card .row, #card .note { font-size: 17px; }
   #card .lbl { display: none; } #card .chips { margin-top: 4px; } #card .note { min-height: 0; } /* keeps the dock hatch clear */
-  .chip { font-size: 13px; } #card .status { font-size: 16px; }
+  .chip, button.chip { font-size: 13px; } .chip small { font-size: 12px; } #card .status { font-size: 16px; }
   #mode { width: 156px; font-size: 22px; } #mode small { font-size: 14px; }
   #ops { width: 156px; top: 66px; padding: 5px 7px; } #ops .count { font-size: 34px; }
   #ops .lbl, #ops .for { font-size: 15px; } #ops button { font-size: 12px; padding: 3px 2px; } #ops .btns { gap: 4px; }
@@ -206,7 +237,7 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
     <button data-act="reset">RESET</button>
   </div>
   <button data-act="save" class="save">SAVE REPLAY</button>
-  <div class="hint">G ledger · T table · R replay · Esc back</div>
+  <div class="hint"><span><b>G</b> ledger ·</span> <span><b>T</b> table ·</span> <span><b>R</b> replay</span><br><span><b>A</b> architecture ·</span> <span><b>Esc</b> back</span></div>
 </div>
 
 <div id="strip" class="hud paper">
@@ -221,7 +252,8 @@ body.room #roomtitle { display: block; } body.room #overlay, body.room #card, bo
 <div id="roomtitle" class="hud paper"><b>GATEHOUSE</b> · the ledger, every call in order <button id="back">← island (Esc)</button></div>
 <div id="iris"><div></div></div>
 <div id="table" class="sheet paper"><h3>Every event seen</h3><table><thead><tr><th>seq</th><th>ts</th><th>agent</th><th>tool</th><th>decision</th><th>rule</th><th>reason</th><th>latency_ms</th><th>since revoke</th></tr></thead><tbody id="t-body"></tbody></table></div>
-<div id="json" class="sheet paper"><h3 id="j-title">Latest event</h3><pre id="j-body"></pre></div>
+<div id="json" class="sheet paper"><h3 id="j-title">Latest event</h3><pre id="j-body"></pre><p id="j-foot" class="foot"></p></div>
+<div id="arch" class="sheet paper"></div>
 
 <script src="three-d-stage.js"></script>
 <script type="module" src="src/main.js"></script>

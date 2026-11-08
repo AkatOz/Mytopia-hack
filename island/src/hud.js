@@ -4,37 +4,77 @@
 // pen or gatehouse that refused, islet labels and the BLOCKED bin count, then one collision pass so nothing overlaps.
 // Pre-existing: the paper look and v1's render()/renderBadge()/ticker/table from main.js. New today: the six tool chips,
 // the last-decision line, the gateway strip, anchored stamps (no speech bubbles any more) and the collision pass.
-import { badge, ALL_TOOLS } from './reducer.js';
+// Round two (docs/ISLAND_V2_ADDITIONS.md): the chips are buttons when live (per-tool revoke and restore), a pulled
+// tool is struck red "pulled", the QUARANTINED pill, the DOM ID card over a gate, the mode badge's second word.
+import { badge, badgeText, ALL_TOOLS } from './reducer.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Write markup only when it changed: live, render() runs on every poll (300 ms), and a button replaced between
+// mousedown and mouseup never receives its click (checker, round two: the tool chips and the tabs).
+const setHtml = (el, html) => { if (el._html !== html) { el._html = html; el.innerHTML = html; } };
 const PLATE_LABEL = { none: 'NO RUN', active: 'ACTIVE', revoked: 'REVOKED', kill: 'KILL REQUESTED', stopped: 'KILLED' };
 const PLACE_NAME = { gatehouse: 'GATEWAY', files: 'FILES', github: 'GITHUB', mail: 'MAIL', admin: 'ADMIN' };
-const PRIORITY = { stamp: 4, tag: 3, label: 2, bin: 1 }; // who keeps its place when two overlap
+const PRIORITY = { stamp: 4, card: 4, tag: 3, label: 2, bin: 1 }; // who keeps its place when two overlap
+const ID_CARD_MS = 1200;
 
-// io: { source, staleAfterMs, lastGoodPoll(), recordedOn(), getState() }
+// ---------- the card's words, as plain functions (no DOM: tests/additions.test.mjs reads them) ----------
+const endedOnItsOwn = (a) => a.plate === 'stopped' && !a.stopNote.startsWith('run stopped');
+// the status pill: [text, css suffix]
+export function statusPill(a) {
+  if (endedOnItsOwn(a)) return ['RUN ENDED', 'ended'];
+  if (a.plate === 'revoked' && a.quarantined) return ['QUARANTINED', 'revoked'];
+  return [PLATE_LABEL[a.plate] || a.plate, a.plate];
+}
+// One chip of the badge. state: on (allowed) | held (allowed, but the whole badge is revoked or killed) | pulled (an
+// operator took it off) | off (never on this badge). act: what a click asks the gateway for ('' = not a button: a tool
+// that was never on the badge stays off, the island does not hand out new tools). sent: "sent..." until the event.
+export function chipState(a, tool, pending = {}) {
+  const held = a.plate === 'revoked' || a.plate === 'kill' || (a.plate === 'stopped' && !endedOnItsOwn(a));
+  const on = a.allowedTools.includes(tool), pulled = !on && (a.pulled || []).includes(tool);
+  return {
+    state: on ? (held ? 'held' : 'on') : pulled ? 'pulled' : 'off',
+    act: on ? 'revoke' : pulled ? 'restore' : '',
+    sent: pending['tool:' + tool] === a.id,
+  };
+}
+// the note: how fast a revoke bit (a badge revoke or one pulled tool), and how the run ended
+export function cardNote(a) {
+  const bit = a.revokeMs == null ? '' : a.revokeTool ? `blocked ${a.revokeMs} ms after the tool was pulled` : `blocked ${a.revokeMs} ms after REVOKE`;
+  return { lines: [bit, a.stopNote].filter(Boolean), bad: a.revokeMs != null || a.stopNote.startsWith('run stopped') };
+}
+
+// io: { source, staleAfterMs, lastGoodPoll(), recordedOn(), getState(), selected() }
 export function createHud(scene, io) {
   // ---------- the agent card ----------
-  function renderCard(state, a) {
-    $('tabs').innerHTML = Object.values(state.agents).filter((x) => x.known).map((x) => `<button data-agent="${esc(x.id)}" class="${x.id === a.id ? 'sel' : ''}">${esc(x.name)}</button>`).join('');
+  function renderCard(state, a, ui) {
+    setHtml($('tabs'), Object.values(state.agents).filter((x) => x.known).map((x) => `<button data-agent="${esc(x.id)}" class="${x.id === a.id ? 'sel' : ''}">${esc(x.name)}</button>`).join(''));
     $('c-name').textContent = a.name;
-    $('c-sub').textContent = `client ${a.clientId || '—'}${a.mode !== 'model' ? ` · ${a.mode === 'scripted' ? 'scripted client' : 'replay'}` : ''}`;
-    const ended = a.plate === 'stopped' && !a.stopNote.startsWith('run stopped');
-    const pill = ended ? 'ended' : a.plate;
-    $('c-status').textContent = ended ? 'RUN ENDED' : PLATE_LABEL[a.plate] || a.plate;
+    $('c-sub').textContent = `client ${a.clientId || '—'}${a.mode === 'scripted' ? ' · scripted client' : a.mode === 'replay' ? ' · replay' : ''}`;
+    const [pillText, pill] = statusPill(a);
+    $('c-status').textContent = pillText;
     $('c-status').className = `status st-${pill}`;
-    // the badge as six chips: allowed green, the rest struck out; a revoked or killed badge holds nothing
-    const held = a.plate === 'revoked' || a.plate === 'kill' || (a.plate === 'stopped' && !ended);
-    $('c-badge').textContent = held ? `${a.allowedTools.length} of ${ALL_TOOLS.length} tools · suspended` : `${a.allowedTools.length} of ${ALL_TOOLS.length} tools`;
-    $('c-chips').innerHTML = ALL_TOOLS.map((t) => `<span class="chip ${a.allowedTools.includes(t) ? (held ? 'held' : 'on') : 'off'}">${esc(t)}</span>`).join('');
+    // the badge as six chips: allowed green, pulled ones struck red, the rest grey; a revoked or killed badge holds nothing
+    const chips = ALL_TOOLS.map((t) => ({ t, ...chipState(a, t, ui.pending) }));
+    const n = a.allowedTools.length;
+    $('c-badge').textContent = chips.some((c) => c.state === 'held') ? `${n} of ${ALL_TOOLS.length} tools · suspended` : `${n} of ${ALL_TOOLS.length} tools`;
+    // live, an allowed or pulled chip is a button: it only POSTs; the chip changes when the gateway's event arrives
+    const live = ui.source !== 'replay';
+    setHtml($('c-chips'), chips.map((c) => {
+      const extra = c.sent ? '<small>sent...</small>' : c.state === 'pulled' ? '<small>pulled</small>' : '';
+      const inner = `<span class="nm">${esc(c.t)}</span>${extra}`;
+      if (!live || !c.act) return `<span class="chip ${c.state}">${inner}</span>`;
+      const tip = c.act === 'revoke' ? `pull ${c.t} from this badge` : `return ${c.t} to this badge`;
+      return `<button class="chip ${c.state}" data-tool="${esc(c.t)}" data-act="${c.act}" title="${esc(tip)}"${c.sent ? ' disabled' : ''}>${inner}</button>`;
+    }).join(''));
     $('c-calls').innerHTML = `calls allowed <b>${a.calls}</b> · blocked <b>${a.blocked}</b>`;
     const last = a.last;
     $('c-last').innerHTML = last ? `last: <span class="${last.decision === 'allow' ? 'good' : 'bad'}">${last.decision.toUpperCase()} ${esc(last.tool)}</span>${typeof last.ms === 'number' ? ` · ${last.ms} ms` : ''}` : 'last: —';
-    // the note: how fast a revoke bit, and how the run ended (both, one per line, when a revoked run was then killed)
-    const notes = [a.revokeMs != null ? `blocked ${a.revokeMs} ms after REVOKE` : '', a.stopNote].filter(Boolean);
-    $('c-note').innerHTML = notes.map(esc).join('<br>');
-    $('c-note').className = `note ${a.revokeMs != null || a.stopNote.startsWith('run stopped') ? 'bad' : 'dim'}`;
+    // the note, one per line (a revoked run that was then killed has both)
+    const note = cardNote(a);
+    $('c-note').innerHTML = note.lines.map(esc).join('<br>');
+    $('c-note').className = `note ${note.bad ? 'bad' : 'dim'}`;
   }
 
   // ---------- the operator panel ----------
@@ -72,7 +112,7 @@ export function createHud(scene, io) {
   function render(state, ui) {
     const a = state.agents[ui.selected] || Object.values(state.agents).find((x) => x.known) || Object.values(state.agents)[0];
     if (!a) return;
-    renderCard(state, a); renderOps(state, a, ui); renderTicker(state, ui);
+    renderCard(state, a, ui); renderOps(state, a, ui); renderTicker(state, ui);
     if ($('table').classList.contains('on')) renderTable(state);
   }
 
@@ -81,7 +121,9 @@ export function createHud(scene, io) {
     const m = badge({ source: io.source, now, lastGoodPoll: lastGood, staleAfterMs: io.staleAfterMs });
     const el = $('mode'); el.className = `hud paper ${m}`;
     const sub = m === 'REPLAY' ? `recorded ${io.recordedOn() || '—'}` : m === 'LIVE' ? 'gateway answering' : lastGood ? `no answer for ${Math.round((now - lastGood) / 1000)} s` : 'no gateway yet';
-    el.innerHTML = `${m}<small>${esc(sub)}</small>`;
+    // LIVE · model or LIVE · scripted: who drives the selected agent's calls, from its last event's agent_mode
+    const sel = io.getState().agents[io.selected()];
+    el.innerHTML = `${esc(badgeText(m, sel && sel.mode))}<small>${esc(sub)}</small>`;
   }
 
   // ---------- the banner (2 s) ----------
@@ -109,15 +151,30 @@ export function createHud(scene, io) {
   // the pixel fonts may arrive after the first measure: measure everything again once they are in
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { for (const el of Object.values(pool)) el._text = null; });
 
-  // DENIED stamps: one per anchor; a new stamp replaces the old one; 1.6 s
-  const stamps = {}; // anchor -> { el, until }
-  function stampAt(anchor, text) {
+  // DENIED stamps and ID cards share the anchors: one piece per anchor, the newest replaces the old one
+  // (an ID card raised at a gate replaces that gate's stamp; the refusal's stamp then replaces the card)
+  const stamps = {}; // anchor -> { el, kind: 'stamp' | 'card' }
+  function pin(anchor, el, kind, ms) {
     const old = stamps[anchor]; if (old) old.el.remove();
-    const el = document.createElement('div'); el.className = 'stamp';
     ov.appendChild(el);
+    stamps[anchor] = { el, kind };
+    return sleep(ms).then(() => { if (stamps[anchor] && stamps[anchor].el === el) { el.remove(); delete stamps[anchor]; } });
+  }
+  function stampAt(anchor, text) {
+    const el = document.createElement('div'); el.className = 'stamp';
+    const done = pin(anchor, el, 'stamp', 1600);
     el._text = null; setText(el, text);
-    stamps[anchor] = { el, until: performance.now() + 1600 };
-    return sleep(1600).then(() => { if (stamps[anchor] && stamps[anchor].el === el) { el.remove(); delete stamps[anchor]; } });
+    return done;
+  }
+  // The ID card (round two, section 3): paper, 220 px, 1.2 s, above the gate (or window, or pen) where the robot shows
+  // it; three lines the reducer took from the gateway's events (idLines). The stripe is the robot's own colour.
+  function idCard(anchor, lines, color) {
+    const el = document.createElement('div'); el.className = 'idcard'; el.dataset.color = color || 'mustard';
+    const part = (l) => String(l).split(' · ').map((p) => `<span class="nw">${esc(p)}</span>`).join(' · ');
+    el.innerHTML = lines.map((l, i) => `<div class="${i === 2 && /\bOK\b/.test(l) ? 'good' : ''}">${part(l)}</div>`).join('');
+    const done = pin(anchor, el, 'card', ID_CARD_MS);
+    el.style.visibility = 'hidden'; el.style.display = 'block'; el._w = el.offsetWidth; el._h = el.offsetHeight; el.style.visibility = '';
+    return done;
   }
 
   // Every frame: place each element at its anchor, then push lower-priority ones down where two overlap.
@@ -151,7 +208,8 @@ export function createHud(scene, io) {
     const bin = node('bin', 'bincount');
     setText(bin, `BLOCKED ${state.blockedTotal}`);
     add(bin, 'bin', scene.binScreen());
-    for (const [anchor, s] of Object.entries(stamps)) add(s.el, 'stamp', scene.stampAnchor(anchor), true);
+    // a stamp is centred on its anchor; an ID card stands just above it
+    for (const [anchor, s] of Object.entries(stamps)) add(s.el, s.kind, scene.stampAnchor(anchor), s.kind === 'stamp');
 
     // the collision pass: highest priority first; a lower one that overlaps (4 px margin) moves down by the overlap + 6 px
     items.sort((x, y) => PRIORITY[y.kind] - PRIORITY[x.kind]);
@@ -196,5 +254,5 @@ export function createHud(scene, io) {
     }
   }
 
-  return { render, renderBadge, renderTable, follow, stampAt, banner, setGatewayStrip };
+  return { render, renderBadge, renderTable, follow, stampAt, idCard, banner, setGatewayStrip };
 }

@@ -57,16 +57,25 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<
 const DECISION = { allow: 'ALLOW', deny: 'DENY', revoked: 'REVOKED', restored: 'RESTORED', kill_requested: 'KILL', run_started: 'START', run_stopped: 'STOP' };
 const toneOf = (e) => (e.decision === 'allow' ? 'allow' : e.decision === 'deny' ? 'deny' : e.rule === 'harness' || e.tool === 'harness' ? 'harness' : 'admin');
 const LEDGER_ROWS = 12, CHAIN_LINKS = 8;
-// percent; they add up to 100. Integrator: at 94 characters the hash column cut "3292d823 ← e9613b5f" short by a
-// few pixels; 100 characters across and a wider hash column fit every column's longest value.
-const COLS = [4.9, 13.1, 9, 9, 13.1, 15.2, 4.9, 9, 21.8];
-const LEDGER_CHARS = 100;                                 // characters across one ledger row, padding included
+// The rule column says just enough (round two, screenshot review: no cell may be clipped).
+const RULE = { 'status-revoked': 'revoked', 'status-killed': 'killed', 'registry-unavailable': 'registry', 'header-mismatch': 'header' };
+// Column widths in characters, each column's longest value plus its padding (VT323 is 0.4 em a character; the
+// arrow in the hash column falls back to a wider font, so that column gets two characters more):
+//   #123 · 21:40:03.060 · research · RESTORED · search_files · allow-list · 178 · 1840 ms · 7457fa6c ← 9b01e2aa
+// v2's widths cut the time, the agent and RESTORED by a character or two; these leave slack in every column.
+const COLS_CH = [6, 14, 10, 10, 14, 11.5, 6.5, 9, 23];
+const LEDGER_CHARS = COLS_CH.reduce((x, y) => x + y, 0) + 2; // characters across one row; +2 for the panel padding
+const COLS = COLS_CH.map((c) => (100 * c) / (LEDGER_CHARS - 2)); // percent of the table
 
 export function createLedgerPanels(ctx, roomApi, opts = {}) {
   const { THREE, stage } = ctx;
   const make = (cls) => { const el = document.createElement('div'); el.className = 'room-panel ' + cls; el.style.display = 'none'; document.body.appendChild(el); return el; };
   const ledgerEl = make('ledger-panel'), chainEl = make('chain-panel');
   let log = [], source = 'live', chainId = '', result = null, checking = false, checkedKey = '';
+  // round two (section 5): a row opens its raw JSON, by click or by Enter on the focused row
+  const rowSeq = (e) => { const tr = e.target.closest && e.target.closest('tr[data-seq]'); return tr ? Number(tr.dataset.seq) : null; };
+  ledgerEl.addEventListener('click', (e) => { const s = rowSeq(e); if (s != null && opts.onRow) opts.onRow(s); });
+  ledgerEl.addEventListener('keydown', (e) => { const s = rowSeq(e); if (e.key === 'Enter' && s != null && opts.onRow) { e.preventDefault(); opts.onRow(s); } });
 
   function statusWord() {
     if (!log.length) return { cls: 'dim', text: 'no rows yet' };
@@ -84,18 +93,19 @@ export function createLedgerPanels(ctx, roomApi, opts = {}) {
       const gw = e.decision === 'allow' || e.decision === 'deny' ? (e.latency_ms ?? '') : '';
       const since = typeof e.ms_since_revoke === 'number' ? `${e.ms_since_revoke} ms` : '';
       const h8 = String(e.hash || '').slice(0, 8), p8 = String(e.prev_hash || '').slice(0, 8);
-      return `<tr class="t-${toneOf(e)}${i === all.length - 1 ? ' newest' : ''}">`
+      return `<tr class="t-${toneOf(e)}${i === all.length - 1 ? ' newest' : ''}" data-seq="${e.seq}" tabindex="0">`
         + `<td>#${e.seq}</td><td>${esc(String(e.ts || '').slice(11, 23))}</td><td>${esc(String(e.agent || '').replace(/-bot$/, ''))}</td>`
-        + `<td class="dec">${esc(DECISION[e.decision] || String(e.decision).toUpperCase())}</td><td>${esc(e.tool)}</td><td>${esc(e.rule)}</td>`
+        + `<td class="dec">${esc(DECISION[e.decision] || String(e.decision).toUpperCase())}</td><td>${esc(e.tool)}</td><td>${esc(RULE[e.rule] || e.rule)}</td>`
         + `<td class="num">${gw}</td><td class="num">${since}</td><td class="hash">${esc(h8)} ← ${esc(p8)}</td></tr>`;
     }).join('');
-    ledgerEl.innerHTML = `<div class="lp-title"><b>THE LEDGER</b><span>${source === 'replay' ? 'recorded rows' : 'the gateway log, live'}</span></div>`
+    // a redraw replaces the rows: keep the keyboard focus on the same row
+    const f = document.activeElement, keep = f && ledgerEl.contains(f) && f.dataset ? f.dataset.seq : null;
+    ledgerEl.innerHTML = `<div class="lp-title"><b>THE LEDGER</b><span>${source === 'replay' ? 'recorded rows · click a row for its JSON' : 'the gateway log, live · click a row for its JSON'}</span></div>`
       + `<div class="lp-strip">${head} · <span class="${sw.cls}">${esc(sw.text)}</span></div>`
-      // column widths follow the longest value of each column, in characters: #123, 21:40:03.060, research, RESTORED,
-      // search_files, status-revoked, 178, 1840 ms, 7457fa6c ← genesis
-      + `<table><colgroup>${COLS.map((w) => `<col style="width:${w}%">`).join('')}</colgroup>`
+      + `<table><colgroup>${COLS.map((w) => `<col style="width:${w.toFixed(2)}%">`).join('')}</colgroup>`
       + `<thead><tr><th>#</th><th>time</th><th>agent</th><th>decision</th><th>tool</th><th>rule</th><th>gw ms</th><th>after revoke</th><th>hash ← prev</th></tr></thead>`
       + `<tbody>${rows || '<tr><td colspan="9" class="empty">no calls yet</td></tr>'}</tbody></table>`;
+    if (keep) ledgerEl.querySelector(`tr[data-seq="${keep}"]`)?.focus({ preventScroll: true });
   }
 
   function drawChain() {

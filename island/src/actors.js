@@ -7,7 +7,7 @@
 // A script is a list of steps (the reducer writes them):
 //   { walk: nodeKey | [x, z] }   walk along layout.route to that node (to this robot's own spot there, see layout.spotOf)
 //   { wait: seconds }
-//   { showId: true }             raise the ID card for 0.7 s
+//   { showId: true, card }       raise the ID card for 0.7 s (card: { at, lines } goes to hooks.idCard for the DOM card)
 //   { gate: key, lamp }          the booth lamp turns 'ok' or 'bad'; on 'ok' the barrier lifts
 //   { escort: { by, to } }       the guard ('booth:<key>' or 'chief') walks to the robot, both walk to `to`, the guard goes home
 //   { pen: 'in' | 'out' }        the rope gate opens, the robot walks into (or out of) the pen, the rope closes
@@ -253,7 +253,12 @@ export function createActors(ctx, world, places, hooks = {}) {
       ff() {},
     },
     showId: {
-      start(a, st) { if (a.frozen || !a.powered || !a.card) st.skip = true; else { a.card.visible = true; a.armLTarget = -2.3; } },
+      // round two: the step may carry card: { at, lines }; the HUD shows it as a DOM ID card while the arm is up
+      start(a, st) {
+        if (a.frozen || !a.powered || !a.card) { st.skip = true; return; }
+        a.card.visible = true; a.armLTarget = -2.3;
+        if (st.step.card && hooks.idCard) hooks.idCard(a.id, st.step.card);
+      },
       update(a, st, dt) {
         if (st.skip) return true;
         st.t = (st.t || 0) + dt;

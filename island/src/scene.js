@@ -38,10 +38,11 @@ export async function createScene(stage) {
   const room = createRoom(ctx);
   stage._scene.add(room.room); room.room.visible = false;
   let onChain = null;
-  const panels = createLedgerPanels(ctx, room, { onChange: (v) => onChain && onChain(v) });
+  let onRow = null;
+  const panels = createLedgerPanels(ctx, room, { onChange: (v) => onChain && onChain(v), onRow: (seq) => onRow && onRow(seq) });
 
   const effects = createEffects(ctx, W, places);
-  const actors = createActors(ctx, W, places, { lamp: effects.lamp, puff: effects.puff, onFx: null });
+  const actors = createActors(ctx, W, places, { lamp: effects.lamp, puff: effects.puff, onFx: null, idCard: null });
 
   // ---------- anchors: names in the effects -> points in the world ----------
   const up = (v, dy) => (v ? v.clone().add(new THREE.Vector3(0, dy, 0)) : null);
@@ -129,6 +130,7 @@ export async function createScene(stage) {
     // true while any robot still has a script to play or a guard is walking one back (replay waits for this)
     busy: () => Object.keys(actors.agents).some((id) => actors.busy(id)) || Object.values(actors.guards).some((gd) => gd.attachedTo),
     onFx(fn) { actors.hooks.onFx = fn; },              // effects carried inside scripts come back out through here
+    onIdCard(fn) { actors.hooks.idCard = fn; },        // fn(agentId, { at, lines }) when a robot raises its ID card
     // effects
     lamp(target, tone, ms = 2500) { effects.lamp(lampOf(target), tone, ms); },
     slip(from, ok) { return effects.slip(slipFrom(from), places.gatehouse.ledgerDrop || places.gatehouse.roof, ok); },
@@ -136,6 +138,7 @@ export async function createScene(stage) {
     smoke: (gate, rung) => effects.smoke(gate, rung),
     clearSmoke: () => effects.clearSmoke(),
     counter(gate, n) { W.gates[gate]?.counter?.set(n); },
+    padlock(gate, on) { W.gates[gate]?.padlock?.set(on); }, // round two: a tool of this islet is pulled from a badge
     // screen positions for the overlay
     stampAnchor: (key) => toScreen(anchorPoint(key)),
     robotScreen: (id) => toScreen(actors.screenOf(id)),
@@ -146,6 +149,7 @@ export async function createScene(stage) {
     // the ledger room
     drawLedger, setRoom, inRoom: () => inRoom, panels,
     onChain(fn) { onChain = fn; },                    // called when the hash-chain check finishes
+    onLedgerRow(fn) { onRow = fn; },                  // fn(seq) when a ledger row is clicked or Enter is pressed on it
     // clicks
     nearGate,
     pickRobot(x, y) {
@@ -161,7 +165,7 @@ export async function createScene(stage) {
     // a new chain (someone pressed RESET): robots in the hatch, guards in the booths, bins empty, counters 0
     reset() {
       actors.reset(); effects.reset();
-      for (const g of Object.values(W.gates)) g.counter?.set(0);
+      for (const g of Object.values(W.gates)) { g.counter?.set(0); g.padlock?.set(false); }
       lastRows = 0;
     },
   };

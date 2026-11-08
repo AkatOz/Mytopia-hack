@@ -4,8 +4,11 @@
 // replay, the iris into the ledger room. New today (docs/ISLAND_V2.md section 7): robot scripts go to the actors,
 // replay keeps the recording's own rhythm (real gaps between events, clamped to 0.6..3.5 s, and each robot beat is
 // allowed to finish before the next row), the speech bubbles are gone, the gateway strip, and a new chain (someone pressed RESET elsewhere) resets the picture.
+// Round two (docs/ISLAND_V2_ADDITIONS.md): the tool chips POST per-tool revoke/restore, the ID card, ledger rows open
+// their raw JSON, and A opens the architecture sheet (src/arch.js).
 import { createScene } from './scene.js';
 import { createHud } from './hud.js';
+import { ARCH_SHEET } from './arch.js';
 import { apply, initialState, withRoster, fresh, gatewayStats, DEFAULT_ROSTER } from './reducer.js';
 
 const cfg = Object.assign({ api: '', adminToken: '', pollMs: 1000, staleAfterMs: 3000 }, window.MYTOPIA || {});
@@ -15,13 +18,16 @@ const source = replayPath ? 'replay' : 'live';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// the scene takes a few seconds to load; a recording must never read STALE (or LIVE) meanwhile
+if (source === 'replay') { $('mode').className = 'hud paper REPLAY'; $('mode').innerHTML = 'REPLAY<small>loading the recording</small>'; }
 
 let roster = DEFAULT_ROSTER;
 let state = initialState(roster);
-let lastGoodPoll = null, uiSel = null, recordedOn = '', chainId = '';
-const pendingBtn = {}; // action -> true while "sent..."
+let lastGoodPoll = null, uiSel = null, recordedOn = '', chainId = '', gwMode = '';
+// action -> truthy while "sent...": the four buttons hold true; a tool chip holds 'tool:<name>' -> the agent id it acts on
+const pendingBtn = {};
 const scene = await createScene(document.querySelector('three-d-stage'));
-const hud = createHud(scene, { source, staleAfterMs: cfg.staleAfterMs, lastGoodPoll: () => lastGoodPoll, recordedOn: () => recordedOn, getState: () => state });
+const hud = createHud(scene, { source, staleAfterMs: cfg.staleAfterMs, lastGoodPoll: () => lastGoodPoll, recordedOn: () => recordedOn, getState: () => state, selected: () => selected() });
 
 // one robot per agent in the roster (an unknown client gets no robot: its refusals are drawn at the gatehouse)
 function ensureRobots() {
@@ -46,6 +52,7 @@ function play(f, quiet = false) {
     case 'freeze': scene.freeze(f.agent); break;
     case 'powerDown': scene.powerDown(f.agent); break;
     case 'counter': scene.counter(f.gate, f.n); break;
+    case 'padlock': scene.padlock(f.gate, f.on); break;
     case 'smoke': scene.smoke(f.gate, f.rung); break;
     case 'packet': scene.packet(backlog); break;
     case 'ack': delete pendingBtn[f.action]; break;
@@ -62,6 +69,8 @@ function timed(f) {
 }
 function pump() { while (playing < MAX_AT_ONCE && queue.length) { const f = queue.shift(); playing++; timed(f).finally(() => { playing--; pump(); }); } }
 scene.onFx((f, quiet) => play(f, quiet));
+// a robot raised its ID card: the DOM card over that gate (window, pen) for 1.2 s, in the robot's colour
+scene.onIdCard((id, card) => hud.idCard(card.at, card.lines, state.agents[id]?.color));
 
 // ---------- apply events (one code path for live and replay) ----------
 function ingest(events) {
@@ -74,7 +83,7 @@ function ingest(events) {
     if (['revoked', 'restored', 'kill_requested', 'run_started'].includes(ev.decision) && source === 'live') loadAgents();
     if (ev.decision === 'run_started') uiSel = null;
   });
-  if (events.length) { scene.drawLedger(state.log, source, chainId); strip(); }
+  if (events.length) { scene.drawLedger(state.log, source, chainId); strip(); hud.renderBadge(); } // the badge names the agent_mode
   render();
 }
 
@@ -91,6 +100,10 @@ requestAnimationFrame(frame);
 // ---------- live: poll the gateway ----------
 async function loadAgents() {
   try { const r = await fetch(`${cfg.api}/agents`, { cache: 'no-store' }); if (r.ok) { roster = await r.json(); state = withRoster(state, roster); ensureRobots(); render(); } } catch {}
+}
+// local or aws: only an aws gateway keeps the durable copy in DynamoDB (the ledger row sheet says which)
+async function loadMode() {
+  try { const r = await fetch(`${cfg.api}/healthz`, { cache: 'no-store' }); if (r.ok) gwMode = (await r.json()).mode || ''; } catch {}
 }
 // GET /events carries the chain id, which changes only on POST /demo/reset: a new id means a fresh log from seq 1
 function newChain(id) {
@@ -161,7 +174,27 @@ async function press(act) {
   } // on 2xx the label stays "sent..." until the matching event (revoked / restored / kill_requested) arrives
 }
 $('ops').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (b) press(b.dataset.act); });
-$('tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-agent]'); if (b) { uiSel = b.dataset.agent; render(); } });
+$('tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-agent]'); if (b) { uiSel = b.dataset.agent; render(); hud.renderBadge(); } });
+
+// The tool chips (round two, section 1): an allowed chip asks for the per-tool revoke, a pulled one for the restore.
+// The chip shows "sent..." until the gateway's revoked/restored event for that tool comes back (ack 'tool:<name>').
+// The gateway answers changed:false (and logs nothing) when the badge already says so: then no event will come.
+async function pressTool(tool, act) {
+  const key = 'tool:' + tool, id = selected();
+  if (source === 'replay' || pendingBtn[key]) return;
+  pendingBtn[key] = id; render();
+  let res = null, body = null;
+  try {
+    res = await fetch(`${cfg.api}/agents/${encodeURIComponent(id)}/tools/${encodeURIComponent(tool)}/${act}`, { method: 'POST', headers: { 'X-Admin-Token': cfg.adminToken || '' } });
+    body = await res.json().catch(() => null);
+  } catch {}
+  if (res && res.ok && !(body && body.changed === false)) return; // wait for the event
+  delete pendingBtn[key];
+  const why = res && res.ok ? (body && body.note) || 'nothing changed' : `refused: ${res ? 'HTTP ' + res.status : 'no answer from the gateway'}`;
+  state = { ...state, ticker: `${act.toUpperCase()} ${tool}: ${why}` };
+  render();
+}
+$('c-chips').addEventListener('click', (e) => { const b = e.target.closest('button[data-tool]'); if (b && b.dataset.act) pressTool(b.dataset.tool, b.dataset.act); });
 
 // ---------- the gatehouse ledger room, entered through an iris wipe ----------
 let irisBusy = false;
@@ -173,25 +206,42 @@ async function room(on) {
 }
 $('back').addEventListener('click', () => room(false));
 
+// ---------- the sheets: T table, the raw JSON of one row, A architecture (one open at a time) ----------
+const SHEETS = ['table', 'json', 'arch'];
+function openSheet(id) { for (const s of SHEETS) $(s).classList.toggle('on', s === id); }
+function showJson(title, ev, foot = '') {
+  $('j-title').textContent = title;
+  $('j-body').textContent = ev ? JSON.stringify(ev, null, 2) : 'no event yet';
+  $('j-foot').textContent = foot;
+  openSheet('json');
+}
+// A ledger row opens the row exactly as the gateway stored it, and says where its durable copy lives
+scene.onLedgerRow((seq) => {
+  const ev = state.log.find((x) => x.seq === seq); if (!ev) return;
+  const where = source === 'replay' ? (chainId ? `recorded chain ${chainId}, seq ${ev.seq}` : 'a recording without a chain id')
+    : gwMode === 'local' ? `local mode: the row sits in the gateway's memory log and JSONL file, chain ${chainId || '—'}, seq ${ev.seq}`
+      : `the same row sits in DynamoDB mytopia_events, pk ${chainId || '—'}, seq ${ev.seq}`;
+  showJson(`#${ev.seq} · ${ev.decision} ${ev.tool} · the row as the gateway stored it`, ev, where);
+});
+
 // ---------- keyboard and robot click ----------
 addEventListener('keydown', (e) => {
   if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
-  if (e.key === 't' || e.key === 'T') { $('json').classList.remove('on'); $('table').classList.toggle('on'); hud.renderTable(state); }
+  if (e.key === 't' || e.key === 'T') { openSheet($('table').classList.contains('on') ? null : 'table'); hud.renderTable(state); }
+  else if (e.key === 'a' || e.key === 'A') { if (!$('arch').innerHTML) $('arch').innerHTML = ARCH_SHEET; openSheet($('arch').classList.contains('on') ? null : 'arch'); }
   else if (e.key === 'r' || e.key === 'R') { const p = replayPath || 'fixture.json'; location.search = `?replay=${encodeURIComponent(p)}`; }
   else if (e.key === 'g' || e.key === 'G') room(!scene.inRoom());
-  else if (e.key === 'Escape') { const open = $('table').classList.contains('on') || $('json').classList.contains('on'); $('table').classList.remove('on'); $('json').classList.remove('on'); if (!open) room(false); }
+  else if (e.key === 'Escape') { const open = SHEETS.some((s) => $(s).classList.contains('on')); openSheet(null); if (!open) room(false); }
 });
 document.querySelector('three-d-stage').addEventListener('click', (e) => {
   if (scene.inRoom()) return;
   const id = scene.pickRobot(e.clientX, e.clientY);
   if (!id) { if (scene.nearGate(e.clientX, e.clientY)) room(true); return; }
-  uiSel = id; render();
+  uiSel = id; render(); hud.renderBadge();
   const ev = [...state.log].reverse().find((x) => x.agent === id);
-  $('j-title').textContent = `${state.agents[id]?.name || id}: latest event`;
-  $('j-body').textContent = ev ? JSON.stringify(ev, null, 2) : 'no event yet';
-  $('table').classList.remove('on'); $('json').classList.add('on');
+  showJson(`${state.agents[id]?.name || id}: latest event`, ev);
 });
 
 render(); strip();
 if (source === 'replay') replay(replayPath);
-else { loadAgents(); poll(); }
+else { loadAgents(); loadMode(); poll(); }

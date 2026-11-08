@@ -111,20 +111,54 @@ export function buildBooth(ctx, parent, name, [x, z], [ox, oz], { counter = fals
   cyl(g, 'ink', 'booth_lamp_stem', 0.04, 0.04, 0.25, 0, H + 0.55, 0, 6);
   const lampMat = M.lamp_off.clone(); lampMat.name = name + '_lamp'; lampMat.emissiveIntensity = 0.7;
   box(g, lampMat, 'booth_lamp', 0.36, 0.36, 0.36, 0, H + 0.78, 0);
-  let counterApi = null;
-  if (counter) counterApi = addCounterPlate(ctx, g, ry, half);
-  return { g, lampMat, counter: counterApi, guardHome: [x, z] };
+  let counterApi = null, padlockApi = null;
+  if (counter) {
+    const wall = cameraWall(ry);
+    counterApi = addCounterPlate(ctx, g, wall, half);
+    padlockApi = addPadlockPlate(ctx, g, wall, half, top);
+  }
+  return { g, lampMat, counter: counterApi, padlock: padlockApi, guardHome: [x, z] };
+}
+
+// Of the booth's three closed walls, the one the default camera sees best (local normal x, z).
+function cameraWall(ry) {
+  const walls = [[0, -1], [-1, 0], [1, 0]];
+  const facing = ([nx, nz]) => (nx * Math.cos(ry) + nz * Math.sin(ry)) * CAM[0] + (-nx * Math.sin(ry) + nz * Math.cos(ry)) * CAM[1];
+  return walls.reduce((best, w) => (facing(w) > facing(best) ? w : best));
 }
 
 // The REFUSED counter: two big digits on a paper plate (brief section 5: digits only, the DOM does the words).
-function addCounterPlate(ctx, g, ry, half) {
-  const walls = [[0, -1], [-1, 0], [1, 0]]; // local normals (x, z) of the three closed walls
-  const facing = ([nx, nz]) => (nx * Math.cos(ry) + nz * Math.sin(ry)) * CAM[0] + (-nx * Math.sin(ry) + nz * Math.cos(ry)) * CAM[1];
-  const [nx, nz] = walls.reduce((best, w) => (facing(w) > facing(best) ? w : best));
+function addCounterPlate(ctx, g, [nx, nz], half) {
   const lines = (n) => [{ text: String(Math.min(99, n)).padStart(2, '0'), size: 3, color: n ? '#b4553e' : '#a49b89' }];
   const sign = pixelSign(ctx, lines(0), { bg: '#fbf7ee', border: '#3a312b', pad: 1 });
   signBoard(ctx, g, 'refused_counter', sign, 1.12, 0.05, nx * (half + 0.07), 0.12, nz * (half + 0.07), Math.atan2(nx, nz), false, 'plaster');
   return { set: (n) => sign.redraw(lines(n)) };
+}
+
+// The padlock (round two, docs/ISLAND_V2_ADDITIONS.md section 1): shown while an operator has pulled one of this
+// islet's tools from a badge. A brick-red plate with a cream pixel padlock (ink shackle), no words; big and plain on
+// purpose, since the half-resolution render draws it about 7 pixels tall. Two copies per gate, both hidden until set(true):
+// one hung from the booth's lintel over the counter wall (as the spec says), and one under the gate's signboard,
+// because several booths stand behind the gatehouse at the default camera and the signboards are always in view.
+const PADLOCK = ['..###..', '.#...#.', '.#...#.', '#######', '###.###', '###.###', '#######'];
+function padlockSign(ctx) {
+  const { kit } = ctx, k = 16, n = PADLOCK.length + 4; // cell size in canvas pixels; glyph plus a two-cell frame
+  const tex = kit.canvasTex(n * k, n * k, (c2) => {
+    c2.fillStyle = '#3a312b'; c2.fillRect(0, 0, n * k, n * k);
+    c2.fillStyle = '#b4553e'; c2.fillRect(k, k, (n - 2) * k, (n - 2) * k);
+    PADLOCK.forEach((row, y) => [...row].forEach((ch, x) => {
+      if (ch === '#') { c2.fillStyle = y < 3 ? '#3a312b' : '#fbf7ee'; c2.fillRect((x + 2) * k, (y + 2) * k, k, k); }
+    }));
+  });
+  return { w: n, h: n, mat: kit.signMat(tex) };
+}
+function addPadlockPlate(ctx, g, [nx, nz], half, lintel) {
+  const plate = ctx.kit.grp(g, 'padlock', nx * (half + 0.1), 0, nz * (half + 0.1), Math.atan2(nx, nz));
+  const size = 1.0;
+  signBoard(ctx, plate, 'padlock_plate', padlockSign(ctx), size, 0.05, 0, lintel - 0.06 - size, 0, 0, false, 'ink');
+  for (const s of [-0.3, 0.3]) ctx.kit.box(plate, 'ink', 'padlock_chain', 0.04, 0.07, 0.04, s, lintel - 0.07, 0);
+  plate.visible = false;
+  return { set: (on) => { plate.visible = !!on; } };
 }
 
 // ---------- scenery recipes (Mytopia campus.js, unchanged apart from taking a parent) ----------
@@ -379,6 +413,10 @@ function buildGate(ctx, parent, key) {
   const tools = Object.keys(L.GATE_OF_TOOL).filter((t) => L.GATE_OF_TOOL[t] === key);
   const sign = pixelSign(ctx, [{ text: L.ISLANDS[key].name, size: 2, color: '#f3ead7' }, ...tools.map((t) => ({ text: t, size: 1, color: '#e7b94e' }))], { pad: 3 });
   const board = signBoard(ctx, g, 'gate_sign', sign, 2.4, 0.1, farX, 3.3, 0, PI / 4 - ry);
+  // the padlock under the sign (round two): turned to the camera like the sign, just in front of the post
+  const lock = grp(g, 'gate_padlock', farX, 0, 0, PI / 4 - ry);
+  signBoard(ctx, lock, 'gate_padlock_plate', padlockSign(ctx), 1.15, 0.06, 0, 2.1, 0.14, 0, true, 'ink'); // top at 3.25, under the sign
+  lock.visible = false;
   // the stop line, in world coordinates, just in front of where a robot halts
   const line = grp(parent, 'stop_line_' + key, G.x - ux * 0.6, 0, G.z - uz * 0.6, ry);
   box(line, 'mustard', 'stop_line', 1.7, 0.02, 0.14, 0, DECK_TOP, 0);
@@ -387,6 +425,7 @@ function buildGate(ctx, parent, key) {
   const signTop = board.g.localToWorld(new THREE.Vector3(0, board.h, 0));
   return {
     key, barrier, lampMat: booth.lampMat, counter: booth.counter, guardHome: booth.guardHome,
+    padlock: { set: (on) => { booth.padlock.set(on); lock.visible = !!on; } },
     stampAnchor: new THREE.Vector3(G.x, 2.9, G.z), signTop, booth: booth.g,
   };
 }

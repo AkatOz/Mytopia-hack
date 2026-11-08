@@ -9,7 +9,7 @@ Since the v2 rebuild (Saturday 2026-11-07 afternoon, `docs/ISLAND_V2.md`) the My
 | File / piece in island/ | Origin in Mytopia | Author, date | Changed here? |
 |---|---|---|---|
 | `three-d-stage.js` | `three-d-stage.js`: the `<three-d-stage>` web component (WebGL renderer, orthographic camera, orbit controls, half-resolution pixel render, ink-outline post-process shader) | Ozi with Claude Code, 2026-10-07 to 10-15 | No, byte-identical |
-| `src/kit.js`: material list and palette, `mat`, `box`/`cyl`/`ball`/`grp`/`pyramid` helpers, `Batch` (vertex-colour mesh builder), the seeded RNG | `campus.js` lines 12-15, 21-90 | same, 2026-10-07 to 10-20 | Gathered into one shared kit; materials for guards, lamps and slips added |
+| `src/kit.js`: **Mytopia's recipes gathered into one file**: the material list and palette, `mat`, `box`/`cyl`/`ball`/`grp`/`pyramid` helpers, `Batch` (vertex-colour mesh builder), the seeded RNG, the canvas-texture helper | `campus.js` lines 12-15, 21-90 | same, 2026-10-07 to 10-20 | The file itself is new (2026-11-07); the recipes in it are Mytopia's. Materials for guards, lamps and slips added |
 | `src/world.js`: the tile-terrain recipe (grass colours, dirt/rock layers, paving) and the scenery recipes `tree`, `bush`, `lamp`, `fence` | `campus.js` lines 91-165, 630-720 | same | Now five islands joined by bridges |
 | `src/buildings.js`: `windowOn`, `door`, `archWindow`, `gableRoof` and the building shapes. **GitHub** = Swing Studio, **Mail** = Welcome Center cottage, **Admin** = Quality Court courthouse | `campus.js` lines 177-226, buildings 3, 6 and the court islet | same | Scaled 1.15, re-placed; the FILES tower and the gatehouse are new |
 | `src/actors.js`: the small robot body (treads, body, head, eyes, antenna) | `campus.js` `smallRobot()` | same | Plate, arms, ID card and the guard uniform added |
@@ -51,4 +51,18 @@ All new code, written during the event:
 - `src/scene.js`: puts the parts together and gives `main.js` one small API.
 - `tests/ledger.test.mjs`: the browser chain check against the gateway's hashes; `tests/reducer.test.mjs` updated for the v2 scripts.
 - `src/main.js`: replay keeps the recording's rhythm and lets each robot beat finish; the speech bubbles are gone.
+
+### Round two (Saturday 2026-11-07, 4 PM onward, `docs/ISLAND_V2_ADDITIONS.md`)
+
+All new code, written during the event:
+
+- `src/arch.js` (new file): the architecture sheet behind key **A**, an inline SVG of the launcher, agent, gateway and the four AWS services with the trust boundaries, plus the table of which picture proves which A10 step and the honest limits.
+- `tests/additions.test.mjs` (new file): per-tool revoke and restore, quarantine, the ID card's lines, the three-state mode badge, the chips.
+- `tests/additions.json` (new file): a hand-written recording in the gateway's event shapes (per-tool revoke, the refusal after it, restore, three refusals, a quarantine); labelled as hand-written in the file, with placeholder hashes. It plays at `?replay=tests/additions.json`.
+- `src/reducer.js`: per-tool `revoked`/`restored` (the badge loses or regains one tool, `gates[key].locked`, ack `tool:<name>`), quarantine (QUARANTINED, no ack), the ID card lines from the gateway's own words, `badgeText` for `LIVE · model` / `LIVE · scripted` / `REPLAY`.
+- `src/hud.js`: the chips as buttons (live), the "pulled" chip, the QUARANTINED pill, the DOM ID card, the mode badge's second word.
+- `src/world.js`: the padlock plate (a canvas pixel padlock) on each gate's booth and under its signboard.
+- `src/actors.js`, `src/scene.js`, `src/main.js`: the ID card hook, the padlock effect, the chips' POSTs, ledger rows that open their raw JSON, the A key.
+- `src/ledger.js`: no clipped cell in the ledger table (full time, agent without "-bot", full decision word, short rule names), rows that open on click or Enter.
+- `index.html`, `README.md`, this file.
 
