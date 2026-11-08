@@ -66,11 +66,11 @@ Status (written about 8 PM, updated later Saturday night after commits 97a7d14 a
 **2. Live on AWS**
 
 - [x] `POST /agents` mints a Gold agent and the Cognito app client `billing-bot` exists in the pool (checked by: run 7, `docs/LIVE_RUN.md`: the client listed with the ws profile, 201 in 1.2 s)
-- [ ] the same mint from the office form on screen (checked by: )
+- [x] the same mint from the office form on screen (checked by: Claude, 8:35 PM on the live AWS island in headless Edge: F, name Audit Bot, Gold, plum, BUILD; 201, `BUILT audit-bot ... client 5ptate5o` on the ticker, the Audit Bot tab on the card; then RETIRE from the office roster: `RETIRED audit-bot`, the pool and the roster back to the two seed agents)
 - [x] `agent/.env` gained its two lines (checked by: run 7, `docs/LIVE_RUN.md`)
 - [x] the badge row is in `mytopia_agents` with `made_by factory` (checked by: run 7, `docs/LIVE_RUN.md`; the `created` event is seq 1 of chain `chain-20261108T035444Z` in `replay/demo3.json`)
 - [x] the `created` event's twin row in `mytopia_events`, opened in the console (checked by: Claude, 8:15 PM, read with the ws profile: pk chain-20261108T035444Z seq 1, decision created, rule factory, hash db953c5d...)
-- [ ] the floor builds it; it rolls to the yard (checked by: ) (the floor plays only in the browser that clicked BUILD; run 6 saw the Billing Bot tab with its Gold medal in headless Edge, not the floor)
+- [x] the floor builds it; it rolls to the yard (checked by: Claude, the same run: the iris into the Factory floor, `BUILDING: Audit Bot · Gold · 5 tools` on the wall board, the chassis in the paint booth, the tool tokens on the rack, then the island again with the plum robot standing in the yard) (the floor plays only in the browser that clicked BUILD; run 6 saw the Billing Bot tab with its Gold medal in headless Edge, not the floor)
 - [x] launch it `--scripted --patrol`; it authenticates and patrols (checked by: run 7, `docs/LIVE_RUN.md`: `token OK`, `run_started` 1.5 s after the mint, one listed tool every 3 s)
 - [x] a grant and a pull reach the gate live (checked by: run 7, `docs/LIVE_RUN.md`, through the gateway's routes: the pulled tool refused once 11,572 ms after the pull, the grant allowed on the next cycle)
 - [x] the chips on the card do the same on screen (checked by: Claude, the AWS run watched in headless Edge: the pulled send_email chip struck red, the padlocked delete_file with its Diamond-only hint, the Diamond card with six green chips) (run 6 saw the pulled chip struck red in headless Edge)
