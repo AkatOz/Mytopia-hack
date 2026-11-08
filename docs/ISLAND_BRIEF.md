@@ -2,6 +2,8 @@
 
 Paste this whole file into teammate #2's Claude Code session, the one that built the Mytopia codebase. It is written for that agent. Humans: read section 0 and section 7.
 
+> Note added Sat 5 PM: this brief built the first island (Saturday morning). The island on screen now is the rebuilt archipelago, which follows `docs/ISLAND_V2.md` and `docs/ISLAND_V2_ADDITIONS.md` instead: no fire, no smoke ladder and no speech bubbles anywhere; a killed run powers the robot down. `island/README.md` describes what the island does today. The contract parts of this brief (events, API, the fixture) still hold.
+
 ## 0. Read this first
 
 You are building the **face** of MYTOPIA, a hackathon entry (AWS x A10 Hack 2026, A10 track, Prompt 1 "Agentic Identity"). Another Claude session (call it "the gateway session") is building the **engine** at the same time: an MCP gateway on a laptop that authenticates AI agents with Amazon Cognito, checks each tool call against a badge stored in DynamoDB, runs the tools in a Lambda, and writes every decision to an audit log. You never talk to AWS and you never decide anything. **The island only draws the gateway's decision log.** Every pixel you animate is one row of that log, and the only things you send back are four button clicks.

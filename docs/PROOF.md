@@ -76,7 +76,7 @@ The first `replay.sh` run (21:48:14 UTC) began with `0 precondition -> research-
 
 The script reads `GET /events?since_seq=0` from a gateway (the default is `http://127.0.0.1:8787`) or from a saved JSON file. It prints count, p50, p95 and max of `latency_ms` for allow rows, for deny rows, and for deny rows by rule. Percentiles use the nearest rank, with no interpolation. It also prints every `ms_since_revoke` and the gap from each `kill_requested` to the next `run_stopped` of the same run. `latency_ms` is the gateway's own decision time: token check plus badge read, taken in `gateway/mcp.py` before the tools Lambda is invoked and before the 2-second demo pace (`DEMO_PACE=2.0` in `gateway/.env`).
 
-### On the recorded live run, `replay/demo.json`
+### On the first recorded live run, `replay/demo-first-run.json` (it was `replay/demo.json` until 4:51 PM)
 
 ```text
 source: replay/demo.json (chain chain-20261107T213953Z), 16 events
@@ -88,7 +88,7 @@ ms_since_revoke              494 ms  (seq 12, read_file, run run-0ffe)
 kill to run_stopped          1274 ms  (seq 15 -> 16, run run-0ffe, exit 1 (killed by harness))
 ```
 
-These match `docs/LIVE_RUN.md`: about 160 to 180 ms per decision, 494 ms from revoke to the first refused call, and 1274 ms from KILL to the process being gone. The sample is one run of 12 decisions, so treat the p95 as a description of this run, not a service level.
+These match `docs/LIVE_RUN.md`: about 160 to 180 ms per decision, 494 ms from revoke to the first refused call, and 1274 ms from KILL to `run_stopped`. The sample is one run of 12 decisions, so treat the p95 as a description of this run, not a service level.
 
 ### On the live gateway, after the replay runs (21:52 UTC)
 
@@ -111,9 +111,9 @@ kill to run_stopped          1274 ms  (seq 15 -> 16, run run-0ffe, exit 1 (kille
 How to read it:
 
 - **Which rows are in the chain.** Seq 1 to 16 are the live run. Seq 17 to 49 come from this proof: two successful `replay.sh` runs (seq 17 to 23 and 44 to 49) and one `replay.ps1` run (seq 24 to 29), plus the two failure-path tests (seq 30 to 41) and one `warm.py` cycle (seq 42 and 43). The failure-path tests stopped at step 6 and restored the badge, so they left only allow, revoke, deny and restore rows. The chain still verifies with `gateway.events.verify_chain` (True at 21:52 UTC). Every later run appends more rows; a re-check at 21:55 UTC (one more `replay.sh` run, seq 50 to 55, one `warm.py --once`, seq 56 and 57, and one `replay.ps1` run at 21:56 UTC, seq 58 to 63) gave the same picture and the chain still verified.
-- **The replay rows' `ms_since_revoke` (353 to 854 ms) is not a gateway number.** It is the time from the revoke to the script's next request, so it includes starting curl and Python between steps. The figure to quote on stage is still the 494 ms from the agent run.
+- **The replay rows' `ms_since_revoke` (353 to 854 ms) is not a gateway number.** It is the time from the revoke to the script's next request, so it includes starting curl and Python between steps. On stage, quote what the run on screen shows: 2829 ms in the 4:18 PM run, 494 ms in the first, and anywhere from near zero to about 3.1 s in general (the agent's 3-second poll).
 - **The 278 ms maximum** is one `tools/list` deny (seq 27). It is the slowest decision recorded today. Every other decision that read the badge fell between 153 and 178 ms.
-- **The `token` denies (77 to 90 ms, p50 84 ms)** are the tampered-token calls. The signature check itself is local. The time goes to one DynamoDB read in `registry.by_client_id` (one per known agent it has to check; research-bot is checked first), which only labels the audit row with an agent name after the token has already failed. The refusal does not depend on DynamoDB.
+- **The `token` denies (77 to 90 ms, p50 84 ms)** are the tampered-token calls. The signature check itself is local. The time went to one DynamoDB read in `registry.by_client_id` (one per known agent it had to check; research-bot was checked first), which only labelled the audit row with an agent name after the token had already failed. The refusal does not depend on DynamoDB. Since the latency work (commit d1cc066) a token that fails verification needs no DynamoDB read: the agent name for the log comes from the gateway's in-memory client-id map (`agent_label`, `tests/test_latency_work.py`). A token with a good signature from a client the map does not know can cost one rebuild of the map (two reads), at most once every 30 s (`LOOKUP_EVERY_S` in `gateway/mcp.py`).
 
 ## Warm-up: `scripts/warm.py`
 
@@ -133,3 +133,21 @@ The times in this line are measured from the client: the HTTP round trip plus, f
 - `scripts/scrubbed/`: the empty `aws_config.ini` and `aws_credentials.ini` used in step 6. The scripts truncate them on every run. `out.json` is never created.
 - `scripts/latency.py`: latency summary from a gateway or a JSON file. Standard library only.
 - `scripts/warm.py`: warm-up loop. It uses boto3, httpx and python-dotenv, which are already in the venv.
+
+## Re-run on the final build (Sat 2026-11-07, 4:20 PM PT)
+
+Right after the fourth live run (`docs/LIVE_RUN.md`), `bash scripts/replay.sh` was run again on the final gateway build: the latency work (commit d1cc066: one badge read per call, the background DynamoDB writer, warm-up) and the additions (commit 0017ae0: per-tool revoke and auto-quarantine). The result, as recorded in `docs/LIVE_RUN.md`: the same still-valid token was refused after the revoke, and `tools/list` returned 0 tools; the tampered token got HTTP 401; `aws lambda invoke` from a shell without the gateway's credentials was refused twice (no credentials, and no `gateway` profile); the badge was restored to ACTIVE. **PASS.** The full per-line output of this run was not saved; the line formats are the ones shown above.
+
+### Latency on the new recording, `replay/demo.json` (the 4:18 PM model-mode run)
+
+```text
+source: replay/demo.json (chain chain-20261108T001839Z), 15 events
+allow                        count   7   p50    87 ms   p95   271 ms   max   271 ms
+deny                         count   4   p50    83 ms   p95    86 ms   max    86 ms
+  deny, rule allow-list      count   1   p50    82 ms   p95    82 ms   max    82 ms
+  deny, rule status-revoked  count   3   p50    83 ms   p95    86 ms   max    86 ms
+ms_since_revoke              2829 ms  (seq 11, read_file, run run-8748)
+kill to run_stopped          358 ms  (seq 14 -> 15, run run-8748, exit 15 (killed by harness))
+```
+
+One badge read per call now, so decisions take about half the first run's time. The 271 ms allow is the first `read_file` after a reset. The 2829 ms is where the agent was in its 3-second poll, not gateway time.

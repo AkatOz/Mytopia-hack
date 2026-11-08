@@ -132,10 +132,10 @@ test('ID card lines: client and expiry from run_started, signature expiry from a
   assert.deepEqual(idCards(first.all[0]), [{ at: 'gatehouse', lines: ['client s2ch2ppk', 'scope mytopia/tools', 'token OK · expires in 300 s'] }]);
   // at the Files gate (seq 3) the card still says what run_started said
   assert.deepEqual(idCards(run(demo.slice(0, 3)).all[2])[0], { at: 'gate:files', lines: ['client s2ch2ppk', 'scope mytopia/tools', 'token OK · expires in 300 s'] });
-  // in the pen after REVOKE, the status refusal's own words: signature OK, expires in 254 s
+  // in the pen after REVOKE, the status refusal's own words: signature OK, expires in 266 s
   const pen = run(demo.slice(0, 12));
-  assert.deepEqual(idCards(pen.all[11])[0], { at: 'pen', lines: ['client s2ch2ppk', 'scope mytopia/tools', 'signature OK · expires in 254 s'] });
-  assert.equal(pen.s.agents['research-bot'].token, 'signature OK · expires in 254 s');
+  assert.deepEqual(idCards(pen.all[11])[0], { at: 'pen', lines: ['client s2ch2ppk', 'scope mytopia/tools', 'signature OK · expires in 266 s'] });
+  assert.equal(pen.s.agents['research-bot'].token, 'signature OK · expires in 266 s');
   assert.equal(tokenLine('badge research-bot: 4 tools'), null);
   // a refusal at the Mail gate shows the card at that gate
   assert.equal(idCards(run(demo.slice(0, 6)).all[5])[0].at, 'gate:mail');

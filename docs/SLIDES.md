@@ -6,11 +6,12 @@ Five slides, shown after the live demo. The deck itself is `docs/slides.html` (o
 
 ## Slide 1. MYTOPIA
 
-**On screen:** the name large; the tagline under it; the track line in orange; the three names with their parts at the bottom. Cream paper background, ink border, no picture (the island has just been on screen during the demo).
+**On screen:** the name large; the tagline under it; the track line in orange; the four steps, and under them one smaller line for the two additions; the three names with their parts at the bottom. Cream paper background, ink border, no picture (the island has just been on screen during the demo).
 
 - Pull an AI agent's badge and its next tool call is refused.
 - A10 Track, Prompt 1: Agentic Identity.
 - Authenticate an agent, allow selected MCP tools, revoke mid-task, block what follows.
+- Also: pull one tool off a badge; the gateway quarantines an agent after 3 refused calls in 60 s.
 - Bob: gateway, identity, AWS. Ozi: the island. Daniel: agent, launcher, business.
 
 **Speaker (Bob), 49 words:** "We are MYTOPIA, A10 track, prompt one. You just watched an agent authenticate with its own Cognito identity, use the tools on its badge, get refused when it tried email, and get refused again on its next call after we pulled its badge, while its token was still valid."
@@ -32,7 +33,7 @@ Five slides, shown after the live demo. The deck itself is `docs/slides.html` (o
 
 ## Slide 3. Architecture and trust boundaries
 
-**On screen:** a three-zone diagram drawn with boxes and arrows. Left zone "Agent (untrusted)": the agent process, with a tag "holds: 5-min Cognito token, Bedrock-only token". Middle zone "Operator laptop": launcher ("holds: client secret"), gateway ("decide(), JWKS cache, admin token"), island ("reads /events, buttons only POST"). Right zone "AWS us-east-1": Cognito, DynamoDB badges, DynamoDB log, Lambda tools, Bedrock. Arrows: agent to gateway `/mcp`; agent to Bedrock; gateway to DynamoDB and Lambda under the narrow role; launcher to Cognito `GetClientToken`. A dashed red line between agent and everything else.
+**On screen:** a three-zone diagram drawn with boxes and arrows. Left zone "Agent (untrusted)": the agent process, with a tag "holds: 5-min Cognito token, Bedrock-only token". Middle zone "Operator laptop": launcher ("holds: client secret"), gateway ("decide(), JWKS cache, admin token"), island ("reads /events, checks the chain; buttons and chips only POST"). Right zone "AWS us-east-1": Cognito, DynamoDB badges, DynamoDB log, Lambda tools, Bedrock. Arrows: agent to gateway `/mcp`; agent to Bedrock; gateway to DynamoDB and Lambda under the narrow role; launcher to Cognito `GetClientToken`. A dashed red line between agent and everything else.
 
 - The agent's credentials open two things: the gateway's `/mcp` and Bedrock's model endpoint.
 - Every call: verify the token offline (JWKS), read the badge (strongly consistent), `decide()`, log.
@@ -46,10 +47,10 @@ Five slides, shown after the live demo. The deck itself is `docs/slides.html` (o
 
 ## Slide 4. AWS, and what we learned
 
-**On screen:** left column, a table of the five services with one line each (Cognito, DynamoDB, Lambda, Bedrock Nova 2 Lite, IAM/STS). Right column, a box titled "No long-lived keys" with the chain drawn top to bottom: "Workshop session keys" to "credential_process, AssumeRole, 1 h" to "mytopia-gateway-role (2 tables, 1 function)"; and beside it "session keys" to "short-term Bedrock token (Bedrock only, 12 h max)" to "agent". Bottom strip: "measured: about 160-180 ms per decision, 494 ms revoke to refusal" (docs/LIVE_RUN.md).
+**On screen:** left column, a table of the five services with one line each (Cognito, DynamoDB, Lambda, Bedrock Nova 2 Lite, IAM/STS). Right column, a box titled "No long-lived keys" with the chain drawn top to bottom: "Workshop session keys" to "credential_process, AssumeRole, 1 h" to "mytopia-gateway-role (2 tables, 1 function)"; and beside it "session keys" to "short-term Bedrock token (Bedrock only, 12 h max)" to "agent". Bottom strip: "measured: about 85 ms per decision, token still valid 269 s, run stopped 358 ms after KILL" (docs/LIVE_RUN.md, the 4:18 PM model-mode run).
 
 - Cognito: one app client per agent, 5-minute tokens from `GetClientToken`, no domain.
-- DynamoDB: the badge read on every call is the kill switch; the log is append-only.
+- DynamoDB: one badge read on every call is the kill switch, for the whole badge or one tool; the log is append-only.
 - Rule: no long-lived IAM keys. Gateway: narrow role assumed from session keys, re-assumed before each 1-hour expiry.
 - Agent: no AWS keys, only a Bedrock-only bearer token; Nova 2 Lite through Strands.
 - Learned: Cognito cannot revoke machine tokens; an authorizer never sees the tool name in the body.
@@ -60,7 +61,7 @@ Five slides, shown after the live demo. The deck itself is `docs/slides.html` (o
 
 ## Slide 5. Business, limits, next
 
-**On screen:** three columns. "Who and price": buyer line, the three tiers, the AWS cost line marked "estimate". "Honest limits": four short lines. "Built vs used": what we wrote this weekend against what we used (Claude Code, Ozi's Mytopia renderer, three.js, two OFL fonts). Bottom line in orange: "Prior art: Kong, LiteLLM, Cloudflare, AgentCore. We add the per-call badge read as the kill switch, and the island."
+**On screen:** three columns. "Who and price": buyer line, the three tiers, the AWS cost line marked "estimate". "Honest limits": four short lines. "Built vs used": what we wrote this weekend against what we used (Claude Code, which wrote the engine and rebuilt the island; Ozi's Mytopia renderer and recipes; three.js; two OFL fonts). Bottom line in orange: "Prior art: Kong, LiteLLM, Cloudflare, AgentCore. We add the per-call badge read as the kill switch, and the island."
 
 - Buyer: platform and security teams letting agents use MCP tools; CISO buys, on-call uses.
 - Price (estimate): free to 100k decisions/month; about $99/month team tier; per-agent enterprise.
@@ -68,7 +69,7 @@ Five slides, shown after the live demo. The deck itself is `docs/slides.html` (o
 - Limits: in-flight call completes; admin token is a demo shortcut; secret in a file, not attested identity.
 - Next: separate agent sandbox, Streams instead of polling, task-scoped badges, AgentCore path.
 
-**Speaker (Daniel), 56 words:** "The buyer is the platform team that lets agents touch internal tools. Free to start, about ninety-nine dollars a month for a team, per agent for enterprise; AWS costs us roughly four to twenty-five dollars per million decisions, an estimate. Claude Code wrote the engine this weekend; the island renderer is Ozi's earlier project. Thank you."
+**Speaker (Daniel), 59 words:** "The buyer is the platform team that lets agents touch internal tools. Free to start, about ninety-nine dollars a month for a team, per agent for enterprise; AWS costs us roughly four to twenty-five dollars per million decisions, an estimate. Claude Code wrote the engine and rebuilt the island this weekend; the renderer is Ozi's earlier project. Thank you."
 
 ---
 
@@ -76,7 +77,7 @@ Five slides, shown after the live demo. The deck itself is `docs/slides.html` (o
 
 | On a slide | Source |
 |---|---|
-| 494 ms, about 160-180 ms, 254 s, about 1.3 s | `docs/LIVE_RUN.md` |
+| about 85 ms, 269 s, 358 ms (the 4:18 PM model-mode run); 3 refused calls in 60 s (`QUARANTINE_AFTER`, `QUARANTINE_WINDOW_S`) | `docs/LIVE_RUN.md`, `gateway/.env.example` |
 | 5-minute tokens, role chaining capped at 1 h | `scripts/probe_result.json`, `infra/README.md` |
 | Bedrock token 12 h max, Bedrock only | `docs/AWS_CREDENTIAL_DESIGN.md` |
 | The Cognito quote | https://docs.aws.amazon.com/cognito/latest/developerguide/token-revocation.html (as quoted in `briefing/build_plan_mytopia.md` and `briefing/judges/judge_mytopia_aws_solutions_architect.md`) |

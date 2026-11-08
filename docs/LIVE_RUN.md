@@ -57,7 +57,7 @@ launcher: run-0ffe stopped, exit 1 (killed by harness)
 
 The numbers above are from the first live run (Sat 1:40 PM). After the latency pass the expected numbers are below, **to be re-measured in rehearsal 1** (run `scripts/latency.py`, or read `GET /stats`, and replace these with what you see).
 
-- Gateway decision time: expected about 80 ms per call (p50; p95 under 90 ms), down from 160 to 240 ms. Every call now does exactly ONE strongly consistent DynamoDB read of the badge (it used to do two: one to map the token's client id to an agent, one for the badge). That single read is the laptop-to-us-east-1 round trip (TCP connect alone measured 76 ms), so it is the floor from this laptop; local-mode runs show 0 to 3 ms. The DynamoDB copy of the log is written by a background thread and no longer counts. To be re-measured in rehearsal 1.
+- Gateway decision time: expected about 80 ms per call (p50; p95 under 90 ms), down from about 160 to 180 ms (two reads per call; Ops Bot, whose client id was looked up second, would have paid a third read, about 240 ms, estimated). Every call now does exactly ONE strongly consistent DynamoDB read of the badge (it used to do two: one to map the token's client id to an agent, one for the badge). That single read is the laptop-to-us-east-1 round trip (TCP connect alone measured 76 ms), so it is the floor from this laptop; local-mode runs show 0 to 3 ms. The DynamoDB copy of the log is written by a background thread and no longer counts. To be re-measured in rehearsal 1.
 - Revoke to first refused call: anywhere from near zero to about 3.1 s (the agent now polls on a fixed 3-second cadence, down from about 5.4 s, plus one decision of about 80 ms). The value the island shows is wherever the agent was in its cycle. To be re-measured in rehearsal 1.
 - Kill to process gone: expected about 0.3 s from the KILL click to `run_stopped` (the launcher's 250 ms status poll plus a psutil kill of about 25 to 45 ms; the launcher prints its own kill-to-gone time, about 40 ms in a local test), down from about 1.3 s. A local-mode test measured 291 ms from `kill_requested` to `run_stopped`. To be re-measured in rehearsal 1.
 - Token still valid at the moment of refusal: about 250 s. Cognito could not have revoked it; the gateway did not need to.
@@ -102,3 +102,25 @@ Chain `chain-20261108T001839Z`, 15 records, saved as `replay/demo2.json` (become
 | Terminal | `ALLOW read_file (gateway 89 ms)`, `DENY send_email: send_email is not on badge research-bot [rule: allow-list]` |
 
 The bypass proof (`scripts/replay.sh`) was re-run on this gateway build right after: same still-valid token refused after the revoke (`tools/list` returned 0 tools), tampered token 401, `aws lambda invoke` from a shell without the gateway's credentials refused twice; badge restored. PASS.
+
+## The profile behind the latency work (Sat 2026-11-07, 3:10 PM PT, laptop in Santa Clara to us-east-1)
+
+Measured by an Opus profiling pass with throwaway scripts against the live tables (20 samples after warm-up unless noted; nothing was written to DynamoDB, no live `/mcp` calls were spent). These are the numbers the latency decisions in section 3 of the plan were made from.
+
+| Piece | Measured |
+|---|---|
+| TCP connect to dynamodb.us-east-1 | p50 76.2 ms, p95 77.6 ms (the round-trip floor) |
+| TCP plus TLS handshake | p50 159.5 ms |
+| One strongly consistent GetItem on `mytopia_agents` (resource Table, the gateway's way) | p50 77.6 ms, p95 80.9 ms |
+| Same with a ProjectionExpression / low-level client / eventual consistency | 76.6 / 77.3 / 77.2 ms (no measurable difference: strong consistency costs nothing extra from here) |
+| Two sequential consistent reads (the first gateway build's call) | p50 155.8 ms, p95 169.5 ms |
+| PutItem of one event | p50 79.3 ms, p95 89.0 ms |
+| Lambda invoke `read_file`, warm / first | p50 109 ms, p95 131 ms / 639 ms |
+| credential_process resolution, first use | 1.6 s (again at each botocore advisory refresh) |
+| First GetItem after start (TLS) / first JWKS fetch | 313 ms / 0.3 to 0.6 s |
+| RS256 `jwt.decode` (2048-bit) | p50 0.072 ms |
+| `decide()` / `record_hash` / `json.loads` of a request / `json.dumps` of a response | 0.0004 / 0.006 / 0.003 / 0.004 ms |
+| The whole local-mode `tools/call` through Starlette's TestClient | p50 2.4 ms, against 1.7 ms for `/healthz` through the same client: about 0.7 ms of gateway work per call |
+| `taskkill /T /F` of a parent plus one child / psutil kill of the same tree | 348 to 447 ms / 23 to 28 ms |
+
+So the Python the gateway runs per call is well under one percent of a decision; the rest is one network round trip per read, which is why the fix was to remove the redundant read rather than to rewrite the kernel in another language.

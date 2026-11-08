@@ -224,17 +224,18 @@ test('gateway strip: decisions, p50 and p95 over the allow and deny rows only', 
   assert.deepEqual(gatewayStats([]), { decisions: 0, allowed: 0, blocked: 0, p50: null, p95: null });
   const demo = JSON.parse(readFileSync(new URL('../../replay/demo.json', import.meta.url))).events;
   const d = gatewayStats(demo);
-  assert.equal(d.decisions, 12);
+  assert.equal(d.decisions, 11);   // the 4:18 PM recording: 15 rows, 11 of them allow or deny
   assert.equal(d.blocked, 4);
-  assert.ok(d.p50 >= 156 && d.p95 <= 178 && d.p50 <= d.p95);
+  assert.equal(d.p50, 86);         // nearest-rank over the 11 rows; the 271 ms is the first read after a reset
+  assert.equal(d.p95, 271);
 });
 
 test('the recorded demo plays end to end and every event draws something', () => {
   const demo = JSON.parse(readFileSync(new URL('../../replay/demo.json', import.meta.url))).events;
   const { s, all } = run(demo);
   all.forEach((fx, i) => assert.ok(fx.length > 0, `demo event ${i + 1} drew nothing`));
-  assert.equal(s.agents['research-bot'].revokeMs, 494);
+  assert.equal(s.agents['research-bot'].revokeMs, 2829);
   assert.equal(s.agents['research-bot'].clientId, 's2ch2ppk');
-  assert.equal(s.agents['research-bot'].stopNote, 'run stopped 1274 ms after KILL');
+  assert.equal(s.agents['research-bot'].stopNote, 'run stopped 358 ms after KILL');
   assert.equal(s.agents['research-bot'].at, 'pen');
 });

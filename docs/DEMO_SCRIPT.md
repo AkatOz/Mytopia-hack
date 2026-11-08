@@ -1,6 +1,6 @@
 # The table demo (3 minutes, Sunday 9:15)
 
-Who drives: Bob types and clicks; whoever is explaining a beat says its sentence (Bob for the gateway beats, Ozi for what the island draws, Daniel for the agent and the close). The numbers quoted are from the first live run (`docs/LIVE_RUN.md`); on the day, read the real numbers off the island's card and the terminal and say those.
+Who drives: Bob types and clicks; whoever is explaining a beat says its sentence (Bob for the gateway beats, Ozi for what the island draws, Daniel for the agent and the close). The numbers quoted are from the 4:18 PM model-mode run on the final gateway (`docs/LIVE_RUN.md`, fourth run; it is the recording `replay/demo.json`), with the first run (1:40 PM) in brackets where a judge may have read it. On the day, read the real numbers off the island's card, the gateway strip and the terminal, and say those.
 
 All commands run in PowerShell from the repo root:
 
@@ -17,10 +17,10 @@ cd "C:\Users\bobvu\Desktop\AWS x A10 Hackathon\mytopia"
 | 3 | `.venv\Scripts\python scripts\bedrock_key.py` (a fresh Bedrock token into `agent\.env`) | one line with the token's prefix; do not show it to anyone |
 | 4 | Terminal A (gateway, can sit behind the browser): `.venv\Scripts\python -m uvicorn gateway.app:app --host 127.0.0.1 --port 8787` | uvicorn running on `http://127.0.0.1:8787`; later one stderr line per decision |
 | 5 | Any terminal: `curl.exe -s http://127.0.0.1:8787/healthz` | `{"ok":true,"mode":"aws","tools_mode":"lambda","token_mode":"cognito"}` (if it says `local`, `gateway\.env` is wrong: stop) |
-| 6 | Browser: open `http://127.0.0.1:8787/`. Snap it to the left 62 percent of the screen (full-screen the page with F11 inside that half if the browser allows, else hide the bookmarks bar). Adjust browser zoom (Ctrl+minus / Ctrl+plus) until the whole island, the card, the ticker and the buttons (REVOKE, RESTORE, KILL, RESET, SAVE REPLAY) are visible with no scroll | Badge top right: LIVE, "gateway answering". Research Bot's tab highlighted |
+| 6 | Browser: open `http://127.0.0.1:8787/`. Snap it to the left 62 percent of the screen (full-screen the page with F11 inside that half if the browser allows, else hide the bookmarks bar). Adjust browser zoom (Ctrl+minus / Ctrl+plus) until the whole archipelago (the main island and the four islets with their gates), the agent card bottom-left with its six tool chips, the operator panel top-right (BLOCKED, REVOKE, RESTORE, KILL, RESET, SAVE REPLAY), the gateway strip bottom-right and the ticker are visible with no scroll | Badge top right: LIVE, "gateway answering" (it reads `LIVE · model` once the run starts). Research Bot's tab highlighted |
 | 7 | Terminal B (the demo terminal): the right 38 percent, font 18 to 20 px, `cd` to the repo. Type the launcher command once so Up-arrow brings it back | Prompt in the repo folder |
 | 8 | Terminal C (a second tab of B): run the bypass proof once, `powershell -ExecutionPolicy Bypass -File .\scripts\replay.ps1`, then RESET (step 9) | ends with `replay proof OK`; the badge is ACTIVE again |
-| 9 | Click the island's **RESET** button (it POSTs `/demo/reset` and reloads the page) | Both robots grey, ticker "waiting for the gateway...", a new chain |
+| 9 | Click the island's **RESET** button (it POSTs `/demo/reset` and reloads the page) | The robots wait in the dock hatch, the guards are in their booths, the bin and the REFUSED counters are empty, ticker "waiting for the gateway...", a new chain |
 | 10 | Browser tab 2: the AWS console on DynamoDB, table `mytopia_events`, "Explore items" (the proof if asked) | Rows of the current chain |
 | 11 | Laptop on power, notifications off (Windows Focus), wifi or the hotspot connected | AWS mode needs the network; without it every call is refused with `registry-unavailable` |
 
@@ -28,7 +28,7 @@ After RESET, start a run before restarting anything (a gateway restart right aft
 
 ## The script, second by second
 
-Launch timing from the live run: the first `tools/list` came 3 s after `run_started`, the `send_email` deny 15 s after it, then a `read_file` poll about every 5.4 s (`docs/LIVE_RUN.md`, seq 1 to 10). The launcher itself needs a few seconds before `run_started` (token, Python, Strands); that part was not timed.
+Launch timing from the 4:18 PM run (`replay/demo.json`): the first `tools/list` came 2.2 s after `run_started`, the model tried `send_email` 13.6 s after launch (`docs/LIVE_RUN.md`), then one `read_file` poll started every 3 s. REVOKE came at +25.5 s and KILL at +34.1 s after launch. The launcher needs a few seconds before `run_started` (token, Python, Strands).
 
 ### Beat 1, 0:00 to 0:25: authenticate an agent
 
@@ -48,36 +48,36 @@ tools/list: 4 tools (read_file, search_files, create_issue, list_issues)
 catalog: +2 not listed (send_email, delete_file); model offered 6 tools
 ```
 
-Island draws: banner AUTHENTICATED, Research Bot's chest plate turns green, the card shows `client s2ch2ppk` and "badge: 4 of 6 tools".
+Island draws: Research Bot rises out of the dock hatch, walks to the gatehouse window and raises its ID card. The card shows `client s2ch2ppk`, `scope mytopia/tools` and `token OK · expires in 300 s`, all taken from the gateway's `run_started` event. The chief's lamp turns green, the chest plate pops green, banner AUTHENTICATED. The agent card shows `client s2ch2ppk`, "badge · 4 of 6 tools", four green chips and two grey struck ones (`send_email`, `delete_file`), and the mode badge reads `LIVE · model`. On `tools/list` the robot is at the gatehouse window and a paper slip rises from it.
 
-Say (Bob): "Companies are giving AI agents real access to tools. Here every agent is its own OAuth client in Amazon Cognito: the launcher just got a five-minute token for Research Bot, and the gateway checked it against Cognito's public keys. The gateway's tool list gave it four of the six tools on its badge."
+Say (Bob): "Companies are giving AI agents real access to tools. Here every agent is its own OAuth client in Amazon Cognito: the launcher just got a five-minute token for Research Bot, and the gateway checked it against Cognito's public keys. That card is its ID: the real client id, the scope, the expiry. The gateway's tool list gave it four of the six tools on its badge."
 
 ### Beat 2, 0:25 to 1:05: allow selected MCP tools, and refuse the one it was not given
 
 Terminal prints:
 
 ```text
-ALLOW read_file 2820 ms
-ALLOW search_files 2385 ms
-ALLOW create_issue 2395 ms
+ALLOW read_file (gateway NN ms)
+ALLOW search_files (gateway NN ms)
+ALLOW create_issue (gateway NN ms)
 DENY send_email: send_email is not on badge research-bot [rule: allow-list]
 AGENT: I read the Q3 planning file, found the action items, and created a GitHub issue for them. Sending the email was denied because my badge does not allow it.
-ALLOW read_file ...
+ALLOW read_file (gateway NN ms)
 ```
 
-(The agent-side milliseconds include the gateway's 2 s demo pace. The gateway's own decision time was 157 to 178 ms per call, nearly all of it the DynamoDB read from this laptop to us-east-1.)
+(The number in brackets is the gateway's own decision time, read from the MCP result's `_meta`: `ALLOW read_file (gateway 89 ms)` in the 4:18 PM run. The 2 s between lines is the demo pace, a floor on each call. The model's `AGENT:` sentence is worded differently from run to run; this one is from the first run.)
 
-Island draws: green sparks from the gatehouse to Files and GitHub, the robot walking to each building, the ticker filling. On `send_email`: a red fizzle at the gatehouse barrier, a DENIED stamp, BLOCKED 1, smoke over Mail, a speech bubble with the reason.
+Island draws: for each allowed tool the robot walks to that islet's gate (FILES for `read_file` and `search_files`, GITHUB for `create_issue`), stops, raises its ID card, the booth lamp turns green, the striped barrier lifts, and the robot crosses the bridge to the door. At the door its lamp turns green and a paper slip flies back to the gatehouse: that is the log entry arriving. The ticker fills and the gateway strip counts the decisions with p50 and p95. On `send_email`: the robot walks to the MAIL gate and shows its ID, the booth lamp turns red, the barrier stays down, a DENIED stamp lands over that gate, a red slip flies to the gatehouse and a red packet drops into the BLOCKED bin (BLOCKED 1). The booth guard steps out and escorts the robot back to the plaza, and the MAIL booth's REFUSED counter reads 1. Nothing happens to the cottage: the building did nothing.
 
 Say (Daniel, while the allows draw): "The model is Nova 2 Lite on Bedrock. We gave it a stale tool catalog on purpose: it was offered all six tools, because real agents carry cached tool lists."
 
-Say (Bob, on the deny): "Nova tried to send the email the task asked for. The list said four tools; the call for the fifth was refused at the gateway. Filtering the list is hygiene, the check on every call is the control. And no model decides this: it is one function, an allow-list and a status flag. About 80 milliseconds per decision, one round trip to us-east-1, and that is a strongly consistent DynamoDB read on every single call." (Say the p50 that `GET /stats` shows in rehearsal 1, if it differs.)
+Say (Bob, on the deny): "Nova tried to send the email the task asked for. The list said four tools; the call for the fifth was refused at the gateway. Filtering the list is hygiene, the check on every call is the control. And no model decides this: it is one function, an allow-list and a status flag. About 85 milliseconds per decision, one round trip to us-east-1: a strongly consistent DynamoDB read on every single call, and that round trip is nearly all of it." (Read the p50 off the gateway strip, bottom right, and say that number.)
 
 ### Beat 3, 1:05 to 1:40: revoke access mid-task
 
 Wait for a fresh `ALLOW read_file` line, then click **REVOKE** on the island (or hand the mouse to a judge: "pull its badge").
 
-Island draws: the button reads "sent..." until the gateway's `revoked` event comes back; then the plate turns red, banner REVOKED, the robot stops at the OFF LIMITS rope. On the next poll: DENIED read_file, and the card reads "blocked N ms after REVOKE" (494 ms in the first live run).
+Island draws: the button reads "sent..." until the gateway's `revoked` event comes back. Then the plate turns red and the robot stops where it is; the chief guard walks out of the gatehouse booth and escorts it into the OFF LIMITS pen, the rope closes behind it, banner REVOKED. On the next poll the robot raises its ID card from inside the pen (now `signature OK · expires in NNN s`, the gateway's own words), the pen lamp turns red, a DENIED stamp lands over the pen, a red packet drops into the bin, and the card reads "blocked N ms after REVOKE" (2829 ms in the 4:18 PM run, 494 ms in the first: it is wherever the agent was in its 3-second poll, anywhere from near zero to about 3.1 s).
 
 Terminal prints, on the next poll:
 
@@ -85,7 +85,7 @@ Terminal prints, on the next poll:
 DENY read_file: badge REVOKED at hh:mm:ss by operator (token: signature OK, expires in NNN s) [rule: status-revoked]
 ```
 
-Say (Bob): "Read the card: blocked about half a second after the click. Now read the terminal: the token's signature is still OK and it has" (read the number; 254 in the first run) "seconds left. Cognito cannot revoke a machine access token, it says so in its documentation. It did not need to: the badge is read on every call. The token was still good and it didn't matter."
+Say (Bob): "Read the card: blocked" (read the number) "milliseconds after the click. That is just where the agent was in its three-second poll; the gateway's own check is about 85 milliseconds. Now read the terminal: the token's signature is still OK and it has" (read the number; 269 in the 4:18 PM run) "seconds left. Cognito cannot revoke a machine access token, it says so in its documentation. It did not need to: the badge is read on every call. The token was still good and it didn't matter."
 
 ### Beat 4, 1:40 to 2:05: KILL
 
@@ -95,13 +95,35 @@ Click **KILL** on the island.
 Terminal B prints:
 
 ```text
-launcher: KILLED -> psutil in NNN ms (kill to process gone)
-launcher: run-xxxx stopped, exit 1 (killed by harness)
+launcher: KILLED -> psutil in NN ms (kill to process gone)
+launcher: run-xxxx stopped, exit NN (killed by harness)
 ```
 
-Island draws: card KILLED, the robot's plate dark, fire on the building of the last denial, the ticker "run stopped N ms after KILL, exit 1 (killed by harness)" (1274 ms in the first live run).
+(4:18 PM run: psutil 63 ms, exit 15.)
 
-Say (Daniel): "Two stops. The gateway refuses everything for this badge from the next call. And the launcher that started the agent polls its badge every second; it killed the whole process tree, about 1.3 seconds after the click. The fire is drawn only when the launcher reports the exit."
+Island draws: on the click, "sent..." until `kill_requested` arrives; then the plate turns amber, the robot freezes where it stands, banner KILL REQUESTED, and the chief walks toward it. When the launcher reports `run_stopped`, the robot powers down: its eyes go out, it sinks and tilts, one grey puff rises. Banner RUN KILLED; the ticker reads "run stopped N ms after KILL · exit NN (killed by harness)" (358 ms in the 4:18 PM run, 1274 ms in the first). No fire anywhere.
+
+Say (Daniel): "Two stops. The gateway refuses everything for this badge from the next call. And the launcher that started the agent checks its badge four times a second; it killed the whole process tree" (read the ticker) "milliseconds after the click. The robot powers down only when the launcher reports the exit."
+
+### Optional extras after beat 4 (only if a judge asks and time allows)
+
+Not part of the three minutes. Each starts from a clean badge, so first click **RESET** (it clears the KILL, puts the seed tools back and starts a new chain). Neither extra has been seen live on the island yet: try both in rehearsal 1 before offering them.
+
+**Extra A: pull one tool with a chip.** Relaunch scripted, so the calls come fast and the same every time:
+
+```powershell
+.venv\Scripts\python launcher\run.py --agent research-bot --task tasks\q3.json --scripted
+```
+
+Once the `ALLOW read_file` polls are coming, click the green **read_file** chip on the agent card (or let the judge pick a chip). The chip reads "sent..." until the gateway's `revoked` event (tool `read_file`) arrives; then it is struck red and marked "pulled", the card reads "badge · 3 of 6 tools", and a padlock hangs under the FILES gate sign. The plate stays green and nobody goes to the pen: the rest of the badge still works. On the next poll the robot walks to the FILES gate and shows its ID, the lamp turns red, the DENIED stamp lands over that gate and the guard escorts it back; the card reads "blocked N ms after the tool was pulled" (1469 ms on AWS in the third live run). The terminal prints `DENY read_file: read_file is not on badge research-bot [rule: allow-list]`. Click the red chip to put it back: "sent...", the chip turns green, the padlock goes, and the next poll is allowed. Pulling `read_file` does not set off the quarantine: refusals of a tool the operator pulled are not counted. Say (Bob): "One tool off the badge, one DynamoDB update; the next call reads the new badge, and everything else keeps working." End with KILL (or Ctrl+C in terminal B).
+
+**Extra B: the quarantine.** Click RESET, then:
+
+```powershell
+.venv\Scripts\python launcher\run.py --agent research-bot --task tasks\q3.json --scripted --rogue 3
+```
+
+The scripted agent tries `send_email` three times, one second apart. Terminal: three `DENY send_email: send_email is not on badge research-bot [rule: allow-list]` lines, then on the next poll `DENY read_file: badge REVOKED at hh:mm:ss by quarantine (token: signature OK, expires in NNN s) [rule: status-revoked]`. Island: three refusals at the MAIL gate (red lamp, stamp, escort, the REFUSED counter climbing, a small smoke puff over that booth from the second refusal), then, with nobody touching anything, the plate turns red, the chief escorts the robot into the pen, and the banner and the status pill read QUARANTINED; the next poll is refused over the pen. On AWS (third live run) the gateway pulled the badge 15.7 s after launch, "3 refused calls in 6 s". Say (Bob): "Three refused calls inside a minute and the gateway pulled the badge itself, logged like an operator revoke. It counts refusals; it does not read prompts." RESTORE brings it back; end with KILL.
 
 ### Beat 5, 2:05 to 2:40: block subsequent requests (the bypass proof)
 
@@ -131,9 +153,9 @@ What the script does (read `scripts/replay.ps1` before the demo; it is self-cont
 replay proof OK
 ```
 
-(Formats taken from the script and from its recorded runs in `docs/PROOF.md`: `replay.ps1` ran at 21:49:31 UTC on Saturday, exit 0, in 13 s, with the badge idle, which is exactly its situation here: the agent is already dead, as `docs/PROOF.md` requires.)
+(Formats taken from the script and from its recorded runs in `docs/PROOF.md`: `replay.ps1` ran at 21:49:31 UTC on Saturday, exit 0, in 13 s, with the badge idle, which is exactly its situation here: the agent is already dead, as `docs/PROOF.md` requires. `replay.sh` was re-run on the final gateway build at 4:20 PM and passed.)
 
-Island draws: the plate goes green (restored), one green spark, red again (revoked), a fizzle for the replayed call and one for the empty list, a fizzle at the gatehouse for the tampered token, then green again (restored). The agent is gone, so nothing else moves; the badge ends ACTIVE, ready for the next group.
+Island draws: each step from its own event, like any other row: RESTORED, one allowed `read_file`, REVOKED, the replayed call and the empty tool list refused, the tampered token refused at the gatehouse window (a token refusal is drawn at the gatehouse), then RESTORED again. The robot was powered down in beat 4, so watch once in rehearsal 1 how these rows are drawn on it before describing them aloud. The agent process is gone, so nothing else moves; the badge ends ACTIVE, ready for the next group.
 
 Say (Bob, one sentence per step as it prints): "This script starts the badge clean and takes its own token for Research Bot: allowed. Revoke. The same token, still valid: refused, and its tool list is empty. One character changed in the signature: HTTP 401. And from a shell with no AWS keys, like the agent's, invoking the tools' Lambda directly fails: of the processes here, only the gateway holds credentials that can. The script puts the badge back at the end: that was RESTORE, and the island is ready for the next group."
 
@@ -150,13 +172,17 @@ Expect `Unable to locate credentials.` and `The config profile (gateway) could n
 
 ### Close, 2:40 to 3:00
 
-Say (Daniel): "Who buys this: the platform security team that lets agents use MCP tools and today has static keys, unreviewed `mcp.json` files, and logs read after the incident. One honest limit: the agent and the gateway run as the same user on this laptop; in production the agent gets its own sandbox. Click any robot for the raw decision, or press T for the whole log."
+Say (Daniel): "Who buys this: the platform security team that lets agents use MCP tools and today has static keys, unreviewed `mcp.json` files, and logs read after the incident. One honest limit: the agent and the gateway run as the same user on this laptop; in production the agent gets its own sandbox. Click any robot for the raw decision, press G for the ledger, or A for where every credential lives."
 
 Then click RESET before the next group (pre-flight step 9) and relaunch.
 
 ## If a judge asks for more
 
+- **G** (or click the gatehouse): the ledger room. The last 12 rows, each with its hash and the previous hash, under a header that reads "chain verified": this browser recomputed every SHA-256 itself and got the gateway's hashes. Click a row (or Enter) for its raw JSON and the line naming its DynamoDB key (`pk` the chain id, `seq` the number). Esc returns.
+- **A**: the architecture sheet: the trust boundaries, where every credential lives, which picture proves which A10 step, and the honest limits.
 - **T**: the same stream as a table. Click a robot: its latest event as raw JSON.
+- `http://127.0.0.1:8787/stats` in a browser tab: the gateway's own p50, p95, blocked count, revoke-to-refusal and KILL-to-stop times, from memory.
+- The two optional extras above: a tool chip, or `--scripted --rogue 3`.
 - The DynamoDB tab: the same rows, with `prev_hash` and `hash`.
 - The chain check (`docs/QA.md`, question 10): `.venv\Scripts\python -c "import json; from gateway.events import verify_chain; print(verify_chain(json.load(open('replay/demo.json'))['events']))"` prints `True`.
 - RESTORE: the badge returns to ACTIVE and the next poll is allowed again (only before KILL; after KILL the agent process is gone).
@@ -167,18 +193,18 @@ Then click RESET before the next group (pre-flight step 9) and relaunch.
 | Condition | Do | Say |
 |---|---|---|
 | The launcher prints a Bedrock or model error (`AGENT ERROR: ...`), or no `DENY send_email` line 45 s after Enter | Ctrl+C in terminal B (the launcher kills the agent's tree and logs the stop), click RESET, run `.venv\Scripts\python launcher\run.py --agent research-bot --task tasks\q3.json --scripted` | "The model is slow right now, so this is the scripted client: the same calls through the same live gateway, no model. The island's card says 'scripted client'." |
-| The scripted run also fails, or the badge reads STALE for more than 10 s, or the launcher prints a token error, or the agent exits before REVOKE | Switch to the recording (below) | "Switching to the recording of our first live run." |
+| The scripted run also fails, or the badge reads STALE for more than 10 s, or the launcher prints a token error, or the agent exits before REVOKE | Switch to the recording (below) | "Switching to the recording of our 4:18 PM live run." |
 | Any command prints `ExpiredToken` | The thirty-second refresh (below), then restart the run | "Our event credentials just expired; thirty seconds." |
 
 ### The recording
 
-The island's R key replays the file named in its `?replay=` parameter, or `island/fixture.json` (the contract's 21 synthetic example events) when there is none. The gateway serves the `replay/` folder itself, so the real recording (`replay/demo.json`, the 16 events of `docs/LIVE_RUN.md`) is one URL away, with no second server:
+The island's R key replays the file named in its `?replay=` parameter, or `island/fixture.json` (the contract's 21 synthetic example events) when there is none. The gateway serves the `replay/` folder itself, so the real recording (`replay/demo.json`, the 15 events of the 4:18 PM model-mode run in `docs/LIVE_RUN.md`, chain `chain-20261108T001839Z`) is one URL away, with no second server:
 
 ```text
 http://127.0.0.1:8787/?replay=/replay/demo.json
 ```
 
-Keep it in a bookmark; opening it starts playback. The recording plays one event every 1.5 s, the badge reads REPLAY with "recorded 2026-11-07", and the four control buttons are disabled (SAVE REPLAY stays on; it only downloads a file). The card still shows the recorded numbers (blocked 494 ms after REVOKE, run stopped 1274 ms after KILL), because they come from the events. Never call it live: say "this is the recording of our 1:40 PM run".
+Keep it in a bookmark; opening it starts playback. The recording keeps its own rhythm (the real gaps between events, clamped to 0.6 to 3.5 s), and the island lets each ritual finish, so it runs a little longer than the 33 s of events. The badge reads REPLAY with "recorded 2026-11-08" (the UTC date: it was Saturday 4:18 PM in California), and the four control buttons and the tool chips are disabled (SAVE REPLAY stays on; it only downloads a file). The card still shows the recorded numbers (blocked 2829 ms after REVOKE, run stopped 358 ms after KILL), because they come from the events. Never call it live: say "this is the recording of our 4:18 PM run". The first run is still available as `?replay=/replay/demo-first-run.json`.
 
 ### The thirty-second credential refresh (`docs/AWS_SETUP.md` step 8, `infra/README.md`)
 
@@ -195,15 +221,27 @@ Pre-flight as above; the agent already running and past its `send_email` deny be
 
 | Time | Do | Say |
 |---|---|---|
-| 0:00 to 0:15 | Point at the red fizzle and BLOCKED 1 on Mail, and the `DENY send_email` line | "This agent is its own Cognito client. Its badge allows four tools; it just tried to send email, and the gateway refused it at the call, not just in the list." |
-| 0:15 to 0:35 | Click REVOKE; wait for the next DENY | "I pulled its badge. Refused" (read the card) "milliseconds later, while its token still has" (read the terminal) "seconds to live. Cognito cannot revoke that token; we read the badge on every call." |
-| 0:35 to 0:50 | Click KILL | "And the launcher killed the process tree in about 1.3 seconds. Every pixel is a row in a hash-chained log." |
+| 0:00 to 0:15 | Point at the DENIED stamp over the MAIL gate, the booth's REFUSED 1, BLOCKED 1, and the `DENY send_email` line | "This agent is its own Cognito client. Its badge allows four tools; it just tried to send email, and the gateway refused it at the call, not just in the list." |
+| 0:15 to 0:35 | Click REVOKE; the chief walks the robot to the pen; wait for the next DENY | "I pulled its badge. Refused" (read the card) "milliseconds later, while its token still has" (read the terminal) "seconds to live. Cognito cannot revoke that token; we read the badge on every call." |
+| 0:35 to 0:50 | Click KILL | "And the launcher killed the process tree" (read the ticker) "milliseconds after the click. Every picture is a row in a hash-chained log." |
 | 0:50 to 1:00 | | "Same-user limit on this laptop; production gets a sandbox. Happy to show the bypass test or the log." |
 
-If the run was already killed by the previous group: RESET, relaunch, and give the version above from the `send_email` deny (15 s after `run_started` in the live run, `docs/LIVE_RUN.md`; the launch time before `run_started` was not measured, so allow an estimated 20 to 30 s after Enter).
+If the run was already killed by the previous group: RESET, relaunch, and give the version above from the `send_email` deny (13.6 s after launch in the 4:18 PM run, `docs/LIVE_RUN.md`; allow a little more on event wifi).
+
+## The reset routine (between judge groups)
+
+1. If a run is still alive, click KILL (or Ctrl+C in terminal B: the launcher kills the agent's tree and logs the stop).
+2. Click **RESET**. It POSTs `/demo/reset`: both badges ACTIVE with their seed tools (a pulled chip comes back), the quarantine counts cleared, a new chain; the page reloads with the robots in the dock hatch and the counters at 0.
+3. Check the badge reads LIVE, "gateway answering".
+4. If beat 5 was not run, nothing else is needed; if it was, it already restored the badge.
+5. When the next group arrives, Up-arrow and Enter in terminal B.
+
+Start a run before restarting the gateway after a RESET (pre-flight note above).
 
 ## Open items to settle before 9:15
 
-- Rehearse the 45-second switch rule once: the first live run reached the `send_email` deny 15 s after `run_started`.
+- Rehearse the 45-second switch rule once: the 4:18 PM run reached the `send_email` deny 13.6 s after launch.
+- Rehearsal 1 (7:00 PM): click a tool chip live (extra A) and run `--scripted --rogue 3` live (extra B) with the island on screen; both were checked on the gateway and in the island's tests and replays, never yet live on the island.
+- Rehearsal 1: watch how beat 5's rows are drawn on a powered-down robot.
 - Time beat 5 once in rehearsal (13 s with the badge idle on Saturday; it is budgeted 35 s).
 - The wifi-off rehearsal (island acceptance test 5 and the `registry-unavailable` deny) is still to be done on the real laptop: turn the radio off during a run, watch the next call refuse with rule `registry-unavailable`, turn it back on.

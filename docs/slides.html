@@ -78,6 +78,7 @@
     font-size: 40px; font-weight: 800; padding: 12px 26px;
   }
   .steps { font-size: 32px; margin-top: 32px; color: var(--muted); }
+  .steps.also { font-size: 26px; margin-top: 12px; }
   .team { margin-top: auto; display: flex; gap: 28px; }
   .team .panel { flex: 1; padding: 18px 24px; }
   .team b { display: block; font-size: 34px; }
@@ -146,6 +147,7 @@
     <div class="tagline">Pull an AI agent's badge and its next tool call is refused.</div>
     <div><span class="track">A10 Track, Prompt 1: Agentic Identity</span></div>
     <div class="steps">Authenticate an agent &middot; allow selected MCP tools &middot; revoke mid-task &middot; block what follows</div>
+    <div class="steps also">Also: pull one tool off a badge &middot; the gateway quarantines an agent after 3 refused calls in 60 s</div>
     <div class="team">
       <div class="panel"><b>Bob</b><span>gateway, identity, AWS</span></div>
       <div class="panel"><b>Ozi</b><span>the island</span></div>
@@ -186,7 +188,7 @@
         <h3>Operator laptop</h3>
         <div class="box hold"><b>Launcher</b><span>holds the client secret; mints tokens; kills the process tree on KILLED</span></div>
         <div class="box gw"><b>Gateway</b><span>verify token (JWKS) &rarr; read badge (consistent) &rarr; <code>decide()</code> &rarr; log</span></div>
-        <div class="box"><b>Island</b><span>reads <code>/events</code>; four buttons only POST</span></div>
+        <div class="box"><b>Island</b><span>reads <code>/events</code>, checks the chain; buttons and chips only POST</span></div>
       </div>
       <div class="zone">
         <h3>AWS us-east-1</h3>
@@ -214,7 +216,7 @@
       <div>
         <table class="svc">
           <tr><td>Cognito</td><td>one app client per agent; 5-min tokens from <code>GetClientToken</code>, no domain</td></tr>
-          <tr><td>DynamoDB</td><td>badge read on every call is the kill switch; append-only log</td></tr>
+          <tr><td>DynamoDB</td><td>one badge read per call is the kill switch, whole badge or one tool; append-only log</td></tr>
           <tr><td>Lambda</td><td>six tools, invoked by the gateway's role; the agent has no key for it</td></tr>
           <tr><td>Bedrock</td><td>Nova 2 Lite through Strands; agent holds no AWS keys</td></tr>
           <tr><td>IAM / STS</td><td>narrow role from session keys, 1-hour sessions, re-assumed before expiry</td></tr>
@@ -239,7 +241,7 @@
         </div>
       </div>
     </div>
-    <div class="measured">Measured: about 160-180 ms per decision &middot; 494 ms revoke to refusal &middot; token still valid 254 s <small>(docs/LIVE_RUN.md)</small></div>
+    <div class="measured">Measured: about 85 ms per decision &middot; token still valid 269 s &middot; run stopped 358 ms after KILL <small>(docs/LIVE_RUN.md)</small></div>
     <div class="num">4 / 5</div>
   </section>
 
@@ -267,8 +269,8 @@
       <div class="panel">
         <h3 class="g">Built vs used</h3>
         <ul>
-          <li>Built this weekend: gateway, launcher, agent, tools, infra, island scene. Claude Code wrote the engine.</li>
-          <li>Used: Ozi's earlier Mytopia renderer (island/ASSETS.md), three.js (MIT), two OFL fonts, AWS.</li>
+          <li>Built this weekend: gateway, launcher, agent, tools, infra, island scene. Claude Code wrote the engine and rebuilt the island.</li>
+          <li>Used: Ozi's earlier Mytopia renderer and recipes (island/ASSETS.md), three.js (MIT), two OFL fonts, AWS.</li>
         </ul>
       </div>
     </div>
