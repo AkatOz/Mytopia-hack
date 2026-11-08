@@ -34,6 +34,7 @@ EVENTS_TABLE = "mytopia_events"
 EXEC_ROLE = "mytopia-tools-exec"
 FUNCTION = "mytopia-tools"
 GATEWAY_ROLE = "mytopia-gateway-role"
+HOST_ROLE = "mytopia-host-role"  # the EC2 server's role (infra/host_ec2.py); kept in the gateway role's trust when it exists
 TAGS = [{"Key": "project", "Value": "mytopia"}]
 
 SEED_ROWS = [
@@ -85,7 +86,8 @@ def plan_lines() -> list[str]:
         f"dynamodb table '{EVENTS_TABLE}' (PK pk S, SK seq N, on-demand)",
         f"iam role '{EXEC_ROLE}' (trust lambda.amazonaws.com, inline logs policy)",
         f"lambda '{FUNCTION}' (python3.12, handler.handler, zip of {HANDLER_FILE}, timeout 15 s)",
-        f"iam role '{GATEWAY_ROLE}' (trust: participant role, 1 h, GetItem/UpdateItem/PutItem/DeleteItem/Scan agents, "
+        f"iam role '{GATEWAY_ROLE}' (trust: participant role, plus '{HOST_ROLE}' if it exists; 1 h, "
+        "GetItem/UpdateItem/PutItem/DeleteItem/Scan agents, "
         "PutItem/Query events, InvokeFunction, Create/DeleteUserPoolClient on the pool)",
         f"write {ROLE_FILE}",
         f"write [profile gateway] into {CONFIG_FILE} (credential_process {CREDS_SCRIPT})",
@@ -174,6 +176,17 @@ def trust(principal: dict) -> str:
     """An assume-role trust policy for one principal, as JSON."""
     return json.dumps({"Version": "2012-10-17", "Statement": [
         {"Effect": "Allow", "Principal": principal, "Action": "sts:AssumeRole"}]})
+
+
+def gateway_principals(iam, participant_arn: str) -> dict:
+    """Who may assume the gateway role: the participant role, plus the hosted server's role when infra/host_ec2.py
+    made one. ensure_role rewrites the whole trust policy, so without this a re-run here would cut the hosted gateway
+    off from AWS within the hour."""
+    try:
+        host_arn = iam.get_role(RoleName=HOST_ROLE)["Role"]["Arn"]
+    except iam.exceptions.NoSuchEntityException:
+        return {"AWS": participant_arn}
+    return {"AWS": [participant_arn, host_arn]}
 
 
 def error_code(e: Exception) -> str:
@@ -349,7 +362,7 @@ def provision() -> None:
     function_arn = ensure_function(lam, exec_arn, code)
     print(f"lambda {function_arn} ({len(code)} bytes)", flush=True)
 
-    role_arn = ensure_role(iam, GATEWAY_ROLE, trust({"AWS": participant_arn}), "mytopia-gateway-narrow",
+    role_arn = ensure_role(iam, GATEWAY_ROLE, trust(gateway_principals(iam, participant_arn)), "mytopia-gateway-narrow",
                            gateway_policy(account, pool_id))
     print(f"role {role_arn}", flush=True)
     print(f"test assume_role OK: {test_assume(sts, role_arn)}", flush=True)

@@ -56,3 +56,11 @@ Python packages, installed from PyPI into `.venv` and not committed (`requiremen
 AWS services used (accounts and service terms provided by the event): Amazon Cognito, Amazon DynamoDB, AWS Lambda, AWS IAM and STS, Amazon Bedrock (Amazon Nova 2 Lite), Amazon CloudWatch Logs.
 
 No images, sounds or 3D model files from third parties are used. The island's geometry is built in code.
+
+## Hosting (Sunday 4 AM)
+
+Used on the hosted server only (docs/HOSTING.md), not vendored in this repo:
+
+- Caddy 2 (Apache-2.0): downloaded by `infra/host_userdata.sh` at first boot; HTTPS (Let's Encrypt) and the team password in front of the gateway.
+- uv (MIT or Apache-2.0): installed by `infra/host_userdata.sh`; installs Python 3.14 and the requirements on the server.
+- bcrypt (Apache-2.0): on the operator's laptop only, imported by `infra/host_ec2.py` to hash the team password.

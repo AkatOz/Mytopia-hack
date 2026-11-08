@@ -23,11 +23,11 @@ function arrow(pts, label, lx, ly) {
 }
 
 // The 18 px facts and labels assume VT323's 0.4 em per character. AWS band: boxes y 34..174, arrow labels at y 189,
-// the laptop/AWS boundary at y 206. Laptop band: boxes y 240..400, the badge-status route along y 424.
+// the machine/AWS boundary at y 206. Machine band (a laptop or the EC2 server): boxes y 240..400, the badge-status route along y 424.
 const AWS_Y = 34, AWS_H = 140, AWS_B = AWS_Y + AWS_H, LAB_Y = 189, LAP_Y = 240, LAP_H = 160, LAP_B = LAP_Y + LAP_H;
 const DDB_B = AWS_Y + 134; // bottom of the two table boxes inside DynamoDB
 const col = (x, lines) => lines.map((l, i) => `<text class="arch-f" x="${x}" y="${LAP_Y + 48 + i * 21}">${esc(l)}</text>`).join('');
-const svg = `<svg class="arch-svg" viewBox="0 0 960 456" width="960" role="img" aria-label="MYTOPIA architecture: launcher, agent and gateway on the laptop; Cognito, DynamoDB, Lambda and Bedrock on AWS">
+const svg = `<svg class="arch-svg" viewBox="0 0 960 456" width="960" role="img" aria-label="MYTOPIA architecture: launcher, agent and gateway on one machine (the EC2 server or a laptop); Cognito, DynamoDB, Lambda and Bedrock on AWS">
 <style>
   .arch-t { font: 600 20px "Pixelify Sans", monospace; fill: ${INK}; }
   .arch-f { font: 18px "VT323", monospace; fill: ${INK}; }
@@ -47,7 +47,7 @@ ${box(464, AWS_Y + 34, 148, 100, 'mytopia_agents', ['the badge: status', 'and al
 ${box(620, AWS_Y + 34, 148, 100, 'mytopia_events', ["the chain's", 'durable copy,', 'PutItem only'], { width: 1.5, titleClass: 'arch-n' })}
 ${box(792, AWS_Y, 152, AWS_H, 'Lambda', ['mytopia-tools:', 'the six tools,', 'invokable only by', "the gateway's role"])}
 <line x1="0" y1="206" x2="960" y2="206" stroke="${BAD}" stroke-width="3" stroke-dasharray="12 8"/>
-<text class="arch-z" x="16" y="232">THIS LAPTOP</text>
+<text class="arch-z" x="16" y="232">ONE MACHINE</text>
 ${box(16, LAP_Y, 184, LAP_H, 'launcher', ['holds the client secret', 'mints the 5-min token', 'owns the agent process', 'polls the badge', 'every 250 ms', 'kills the process tree'])}
 ${box(256, LAP_Y, 180, LAP_H, 'agent', ['Strands, Nova 2 Lite', 'holds only the token', 'and a Bedrock-only', 'bearer token; its one', 'MCP server is the', 'gateway'])}
 <line x1="477" y1="218" x2="477" y2="444" stroke="${BAD}" stroke-width="3" stroke-dasharray="12 8"/>
