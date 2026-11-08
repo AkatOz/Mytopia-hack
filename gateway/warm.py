@@ -12,6 +12,7 @@ from gateway.registry import KNOWN_AGENTS
 KEEP_WARM_S = 60.0          # credentials refresh check + one discarded GetItem
 LAMBDA_PING_S = 240.0       # an idle Lambda container is kept for minutes; ping well inside that
 EARLY_REFRESH_S = 2 * KEEP_WARM_S  # refresh this long before botocore's own advisory window opens
+POOL_CONNECTIONS = 3        # the launcher's 250 ms status poll, the agent's call and the keep-warm tick can overlap
 
 
 def step(label: str, action: Any) -> str:
@@ -47,10 +48,27 @@ def refresh_credentials(session: Any) -> None:
     refresh_early(credentials)
 
 
+def warm_connections(handler: Any, n: int = POOL_CONNECTIONS) -> None:
+    """n discarded consistent reads AT ONCE, so the DynamoDB client's pool holds n open TLS connections.
+    With one warm connection, two overlapping reads (the status poll and the first tool call after a reset) made the
+    second one open a new connection on the request path: measured 271 to 477 ms instead of about 80."""
+    def read(i: int) -> None:
+        try:
+            handler.registry.get(KNOWN_AGENTS[i % len(KNOWN_AGENTS)])
+        except Exception:  # noqa: BLE001 - a warm read that fails only means a slower first call
+            pass
+    threads = [threading.Thread(target=read, args=(i,), name=f"warm-pool-{i}", daemon=True) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+
 def warm_up(handler: Any, session: Any) -> None:
     """Once at startup: both badge rows (seeding the map, first so no agent waits on a slow JWKS), credentials,
     JWKS, and a no-op Lambda invoke. The registry step resolves the credentials itself if they are not yet there."""
     parts = [step("registry", handler.refresh_agents),
+             step("pool", lambda: warm_connections(handler)),
              step("credentials", lambda: refresh_credentials(session)),
              step("jwks", handler.verifier.warm),
              step("lambda", handler.tools.warm)]
@@ -58,13 +76,13 @@ def warm_up(handler: Any, session: Any) -> None:
 
 
 def keep_warm(handler: Any, session: Any, stop: threading.Event) -> None:
-    """Every 60 s: refresh credentials if due and do one discarded GetItem (or rebuild the client map while it is
-    still empty, e.g. after a failed warm-up); every 4 min: ping the Lambda."""
+    """Every 60 s: refresh credentials if due and keep POOL_CONNECTIONS connections warm with discarded GetItems (or
+    rebuild the client map while it is still empty, e.g. after a failed warm-up); every 4 min: ping the Lambda."""
     next_ping = time.monotonic() + LAMBDA_PING_S
     while not stop.wait(KEEP_WARM_S):
         step("credentials", lambda: refresh_credentials(session))
         if handler.agent_by_client:
-            step("registry", lambda: handler.registry.get(KNOWN_AGENTS[0]))
+            step("pool", lambda: warm_connections(handler))
         else:
             step("registry", handler.refresh_agents)
         if time.monotonic() >= next_ping:

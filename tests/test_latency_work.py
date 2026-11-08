@@ -432,7 +432,10 @@ def test_warm_up_runs_every_step_and_keep_warm_repeats(monkeypatch: pytest.Monke
     from gateway import warm
     fake = Recorder()
     warm.warm_up(fake, fake)
-    assert fake.done == ["refresh_agents", "credentials", "warm", "warm"]  # rows first, then credentials, JWKS, Lambda
+    # rows first, then three parallel pool reads (any order), then credentials, JWKS, Lambda
+    assert fake.done[0] == "refresh_agents"
+    assert sorted(fake.done[1:4]) == sorted(["get research-bot", "get ops-bot", "get research-bot"])
+    assert fake.done[4:] == ["credentials", "warm", "warm"]
     fake.done.clear()
     monkeypatch.setattr(warm, "KEEP_WARM_S", 0.01)
     monkeypatch.setattr(warm, "LAMBDA_PING_S", 0.0)

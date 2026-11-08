@@ -290,6 +290,8 @@ def create_app(settings: Settings) -> Starlette:
             await run_in_threadpool(handler.refresh_agents)  # client ids may have changed (re-provisioning)
         except RegistryUnavailable:
             pass  # the map keeps its old entries; a miss looks the client up again
+        if settings.mode == "aws":  # a reset is followed by a launch: have the connections ready for the first calls
+            threading.Thread(target=warm.warm_connections, args=(handler,), name="reset-warm", daemon=True).start()
         return JSONResponse({"ok": True, "chain": events.reset()})
 
     async def demo_replay(request: Request) -> Response:

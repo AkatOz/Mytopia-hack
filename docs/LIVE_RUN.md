@@ -124,3 +124,7 @@ Measured by an Opus profiling pass with throwaway scripts against the live table
 | `taskkill /T /F` of a parent plus one child / psutil kill of the same tree | 348 to 447 ms / 23 to 28 ms |
 
 So the Python the gateway runs per call is well under one percent of a decision; the rest is one network round trip per read, which is why the fix was to remove the redundant read rather than to rewrite the kernel in another language.
+
+## Fifth live run: the first call after a reset (Sat 2026-11-07, 5:34 PM PT, scripted client, real AWS)
+
+The first tool call after a reset had cost 271 ms and 477 ms in the two runs before: the launcher's 250 ms status poll and the agent's first call overlapped on the one warm connection in the DynamoDB client's pool, so the second read opened a new TLS connection on the request path. The gateway now keeps three pooled connections warm (at startup, every minute, and right after `/demo/reset`). This run, chain `chain-20261108T013422Z`: `tools/list` 151 ms, then `read_file` **81 ms**, `search_files` 77, `create_issue` 83, the refused `send_email` 77, every later decision 76 to 79 ms; revoke to first refusal 293 ms; the agent's terminal printed `ALLOW read_file (gateway 81 ms)` as its first tool line.
