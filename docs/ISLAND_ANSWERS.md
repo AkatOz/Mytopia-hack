@@ -41,3 +41,17 @@ Two things, in words only:
 2. The provenance line for `three-d-stage.js` is still wanted (request 1 of the 2:20 PM list): where the "omelette starter" it began as came from, and under which licence. One sentence in `island/ASSETS.md` is enough.
 
 For the stage: your two-minute part is rewritten in `docs/QA.md` ("Ozi: the island") and the module-by-module study sheet is in `docs/EXPLAIN.md` (island section). Rehearsal 1 is at 7:00 PM.
+
+# Build 3 is in (Sat 2026-11-07, about 8 PM PT): who owns what, and one change to `three-d-stage.js`
+
+Build 3 (`docs/BUILD3.md`, commit a446d49, 7:29 PM) added the Factory island (mint, tiers, inspect, retire), the chips as give-and-take buttons, seven rotatable interiors with the hash-chain exhibit and TAMPER TEST, the plain-word operator panel, the agent sheet, the help sheet and hide-panels. 189 pytest and 66 island tests pass (updated later Saturday night: six tests on the AWS recording were added in 97a7d14). The Factory ran on AWS at 7:55 PM (run 7 in `docs/LIVE_RUN.md`, after Bob put the gateway role's new permissions at 7:53 PM with `infra/role_policy.py`; run 6 is the same flow in local mode). Its recording is `replay/demo3.json`.
+
+Who owns what now, for the record:
+
+- `gateway/`, `launcher/`, `agent/`, `infra/`, `tools/`, `contract/`, `tests/`: the gateway session (Claude), as before.
+- `island/`, every file: the gateway session (Claude) since 3:30 PM Saturday, as announced above. Tonight's four streams (the gateway lifecycle; the Factory world; the interiors; reducer, HUD, main and tests) were Claude's own subagents. No file under `island/` is edited from branch `island` any more.
+- Pre-existing and still Ozi's: the renderer `three-d-stage.js`, the palette and the recipes in `src/kit.js`, the terrain, scenery and building shapes, and the small robot, as `island/ASSETS.md` lists them.
+
+The one change to a pre-existing file. `island/three-d-stage.js` was byte-identical to Mytopia's until tonight. Build 3 adds one method, `setPixel(px)`: the rooms call `setPixel(1)` when one opens, so their painted boards render at full resolution, and `setPixel(2)` when it closes, so the island keeps its half-resolution pixel look; the `px` value the component read from its `pixel` attribute is now kept as `this._px`, so the method can change it and refit. Eleven lines added, none removed (`git diff --ignore-cr-at-eol 65b74c3 a446d49 -- island/three-d-stage.js`); the file was also saved with Windows line endings (CRLF) in that commit, which is why a plain diff touches every line (`git show a446d49:island/three-d-stage.js | tr -cd '\r' | wc -c` counts 592 carriage returns; the copy at `65b74c3` has none). `island/ASSETS.md` says so in the file's own row, next to its provenance line. Ozi: please read that row and object if it is wrong. The provenance line for the "omelette starter" the file began as is still wanted (the requests of 2:20 PM and 5 PM above): one sentence naming where it came from and under which licence.
+
+For the stage: the six beats of the new demo are in `docs/DEMO_SCRIPT.md`; the Factory, the rooms, the inquest panel and the agent sheet are described in `island/README.md`. Rehearsal 2 (about 11:15 PM) is the first time the six beats are watched by eye on the island on the demo laptop (run 6 polled the island in headless Edge during the local-mode run; run 7 ran the whole flow on AWS through the gateway's routes).

@@ -147,13 +147,13 @@
     <div class="tagline">Pull an AI agent's badge and its next tool call is refused.</div>
     <div><span class="track">A10 Track, Prompt 1: Agentic Identity</span></div>
     <div class="steps">Authenticate an agent &middot; allow selected MCP tools &middot; revoke mid-task &middot; block what follows</div>
-    <div class="steps also">Also: pull one tool off a badge &middot; the gateway quarantines an agent after 3 refused calls in 60 s</div>
+    <div class="steps also">Also: the Factory mints, ranks (Bronze to Diamond), inspects and retires agents &middot; give or take one tool live &middot; the gateway quarantines an agent after 3 refused calls in 60 s</div>
     <div class="team">
-      <div class="panel"><b>Bob</b><span>gateway, identity, AWS</span></div>
+      <div class="panel"><b>Bob</b><span>gateway, identity, the Factory, AWS</span></div>
       <div class="panel"><b>Ozi</b><span>the island</span></div>
       <div class="panel"><b>Daniel</b><span>agent, launcher, business</span></div>
     </div>
-    <div class="num">1 / 5</div>
+    <div class="num">1 / 6</div>
   </section>
 
   <!-- 2 -->
@@ -171,7 +171,7 @@
       </div>
     </div>
     <div class="so">So revocation lives in the gateway, <span class="g">on every call.</span></div>
-    <div class="num">2 / 5</div>
+    <div class="num">2 / 6</div>
   </section>
 
   <!-- 3 -->
@@ -195,10 +195,10 @@
         <div class="aws">
           <div class="box"><b>Cognito</b><span>1 app client per agent</span></div>
           <div class="box"><b>Bedrock</b><span>the agent's model</span></div>
-          <div class="box"><b>DynamoDB</b><span>badges: Get / Update</span></div>
+          <div class="box"><b>DynamoDB</b><span>badges: Get / Update; Put / Delete / Scan for the Factory</span></div>
           <div class="box"><b>DynamoDB</b><span>log: Put / Query only</span></div>
           <div class="box"><b>Lambda</b><span>six fake tools</span></div>
-          <div class="box hold"><b>Gateway role</b><span>these three, nothing else</span></div>
+          <div class="box hold"><b>Gateway role</b><span>these, plus app clients in one pool; nothing else</span></div>
         </div>
       </div>
     </div>
@@ -206,17 +206,33 @@
       <p>Log: SHA-256 hash chain, conditional PutItem. Tamper-evident, not tamper-proof.</p>
       <p class="limit">Limit: agent and gateway share one OS user on this laptop; production separates them.</p>
     </div>
-    <div class="num">3 / 5</div>
+    <div class="num">3 / 6</div>
   </section>
 
   <!-- 4 -->
+  <section class="slide">
+    <h1>The identity lifecycle</h1>
+    <p class="lead">Joiner, mover, leaver, for agents. Every step is one row in the same hash-chained log, and the agent's next call reads the new badge.</p>
+    <table class="svc">
+      <tr><td>Mint</td><td>the Factory form: name, tier, tools, colour, role. One Cognito app client per agent, one badge row; the secret goes only to the launcher's file</td><td class="mono">CreateUserPoolClient &middot; PutItem (attribute_not_exists)</td></tr>
+      <tr><td>Tier</td><td>Bronze, Silver, Gold, Diamond: the most a badge may ever hold. Promote opens the padlock; demote trims the badge to the ceiling</td><td class="mono">UpdateItem (tier, allowed_tools)</td></tr>
+      <tr><td>Grant / pull</td><td>one tool on or off the badge, live, from a chip. Above the ceiling the gateway answers 403 and writes nothing, even to the operator</td><td class="mono">UpdateItem (allowed_tools)</td></tr>
+      <tr><td>Revoke / kill</td><td>the badge is read on every call, so the next call is refused; the launcher kills the process tree. 3 refused calls in 60 s: the gateway revokes by itself</td><td class="mono">UpdateItem (status), conditional</td></tr>
+      <tr><td>Inquest</td><td>the run's report: calls, refusals, who pulled the badge and when, the timings, the verdict. A fixed function over the chain; the browser computes the same counts and timings</td><td class="mono">no AWS call: the chain in memory</td></tr>
+      <tr><td>Retire</td><td>the identity deleted, the badge row removed, the env lines gone; the roster forgets it</td><td class="mono">DeleteUserPoolClient &middot; DeleteItem</td></tr>
+    </table>
+    <p class="learned"><b>No model in the loop:</b> the ceiling is enforced by the gateway, the inquest is computed from the log. Measured on AWS: mint about 1.2 s, decision p50 79 ms, run stopped 113 ms after KILL (docs/LIVE_RUN.md, run 7).</p>
+    <div class="num">4 / 6</div>
+  </section>
+
+  <!-- 5 -->
   <section class="slide">
     <h1>AWS, and what we learned</h1>
     <div class="two">
       <div>
         <table class="svc">
-          <tr><td>Cognito</td><td>one app client per agent; 5-min tokens from <code>GetClientToken</code>, no domain</td></tr>
-          <tr><td>DynamoDB</td><td>one badge read per call is the kill switch, whole badge or one tool; append-only log</td></tr>
+          <tr><td>Cognito</td><td>one app client per agent (the Factory creates and deletes them); 5-min tokens from <code>GetClientToken</code>, no domain</td></tr>
+          <tr><td>DynamoDB</td><td>one badge read per call is the kill switch, whole badge or one tool; the Factory adds and removes badge rows; append-only log</td></tr>
           <tr><td>Lambda</td><td>six tools, invoked by the gateway's role; the agent has no key for it</td></tr>
           <tr><td>Bedrock</td><td>Nova 2 Lite through Strands; agent holds no AWS keys</td></tr>
           <tr><td>IAM / STS</td><td>narrow role from session keys, 1-hour sessions, re-assumed before expiry</td></tr>
@@ -236,16 +252,16 @@
         </div>
         <div class="row"><div class="down">&darr;</div><div class="down">&darr;</div></div>
         <div class="row">
-          <div class="step"><b>Gateway</b>2 tables, 1 function</div>
+          <div class="step"><b>Gateway</b>2 tables, 1 function, 1 pool's app clients</div>
           <div class="step"><b>Agent</b>model calls only</div>
         </div>
       </div>
     </div>
     <div class="measured">Measured: about 85 ms per decision &middot; token still valid 269 s &middot; run stopped 358 ms after KILL <small>(docs/LIVE_RUN.md)</small></div>
-    <div class="num">4 / 5</div>
+    <div class="num">5 / 6</div>
   </section>
 
-  <!-- 5 -->
+  <!-- 6 -->
   <section class="slide">
     <h1>Business, limits, next</h1>
     <div class="three">
@@ -262,20 +278,20 @@
         <ul>
           <li>A call already past the check completes.</li>
           <li>Admin token is a demo shortcut.</li>
-          <li>Client secret in a file stands in for attested workload identity.</li>
+          <li>The minted client secret goes to a file on this laptop: it stands in for a secrets manager and attested workload identity.</li>
           <li>Next: separate agent sandbox, Streams instead of polling, task-scoped badges, AgentCore path.</li>
         </ul>
       </div>
       <div class="panel">
         <h3 class="g">Built vs used</h3>
         <ul>
-          <li>Built this weekend: gateway, launcher, agent, tools, infra, island scene. Claude Code wrote the engine and rebuilt the island.</li>
+          <li>Built this weekend: gateway, launcher, agent, tools, infra, the island, the Factory. Claude Code wrote the engine and built the island.</li>
           <li>Used: Ozi's earlier Mytopia renderer and recipes (island/ASSETS.md), three.js (MIT), two OFL fonts, AWS.</li>
         </ul>
       </div>
     </div>
     <p class="prior">Prior art: Kong, LiteLLM, Cloudflare, AgentCore. We add the per-call badge read as the kill switch, and the island as the wall display.</p>
-    <div class="num">5 / 5</div>
+    <div class="num">6 / 6</div>
   </section>
 
 </div>
