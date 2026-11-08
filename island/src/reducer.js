@@ -1,8 +1,28 @@
 // The island's only logic. apply(state, event) returns the next state plus a list of effects to play.
 // Pure: no DOM, no clock, no network. The same function handles live and replayed events.
-// Contract: contract/README.md + docs/ISLAND_BRIEF.md section 3 (do not change the event shape here).
+// Contract: contract/README.md (do not change the event shape here).
+// v1 (this morning): plates, lamps, the smoke ladder, the ack rule, the badge rule, fresh(), the kill-vs-exit rule.
+// v2 (2026-11-07 afternoon, docs/ISLAND_V2.md section 4): each event now becomes a SCRIPT for the robot (walk to a gate,
+// show the ID card, the gate says yes or no, a guard escorts it back...) plus a few instant effects. Fire is gone: a
+// refused call never burns a building, because the building did nothing. Refusals are counted per gate.
+//
+// Effect kinds (main.js plays them; scene.js draws them):
+//   { kind: 'script', agent, steps }            the robot's script (steps are listed in actors.js)
+//   { kind: 'plate', agent, plate }             chest plate: none | active | revoked | kill | stopped
+//   { kind: 'banner', text, tone }              the 2 s banner at the top
+//   { kind: 'stampAt', anchor, text }           DENIED stamp over 'gate:<key>' | 'pen' | 'gatehouse'
+//   { kind: 'slip', from, ok }                  a paper slip flies from 'door:<key>' | 'gate:<key>' | 'pen' | 'gatehouse' to the ledger
+//   { kind: 'packet' }                          one red packet drops into the BLOCKED bin
+//   { kind: 'lamp', target, tone }              'door:<key>' | 'booth:<key>' | 'pen' | 'chief', tone ok | bad
+//   { kind: 'smoke', gate, rung }               the trouble ladder over a gate's booth (rung 1 or 2)
+//   { kind: 'counter', gate, n }                the REFUSED plate on a booth
+//   { kind: 'powerDown', agent }                eyes out, sinks, tilts
+//   { kind: 'halt', agent }                     stop where you are (revoke)
+//   { kind: 'freeze', agent }                   stop where you are and stay stopped (kill)
+//   { kind: 'ack', action }                     clears a button's "sent..."
+// Steps inside a script may carry an effect as { fx: effect }: it plays at that moment of the walk.
 
-// Which building owns which tool. tools/list belongs to the gatehouse (the gateway itself).
+// Which islet owns which tool. tools/list belongs to the gatehouse (the gateway itself).
 export const TOOL_HOME = {
   read_file: 'files', search_files: 'files',
   create_issue: 'github', list_issues: 'github',
@@ -12,6 +32,7 @@ export const TOOL_HOME = {
 };
 export const ALL_TOOLS = ['read_file', 'search_files', 'create_issue', 'list_issues', 'send_email', 'delete_file'];
 export const BUILDINGS = ['gatehouse', 'files', 'github', 'mail', 'admin'];
+export const GATES = ['files', 'github', 'mail', 'admin']; // one gate per islet, at the main-island end of its bridge
 
 // Used until GET /agents answers (and always in replay, where there is no gateway to ask).
 export const DEFAULT_ROSTER = [
@@ -20,37 +41,65 @@ export const DEFAULT_ROSTER = [
 ];
 
 // plate: none (grey, no run) | active (green) | revoked (red) | kill (amber) | stopped (dark, eyes out)
-function newAgent(r) {
+// at: where the robot stands when its scripts finish, as a waypoint name from layout.js:
+//     hatch | plaza | gh_window | door_files | door_github | door_mail | door_admin | pen
+// known: true for agents in the roster (they get a robot); an event from an unknown agent is drawn at the gatehouse only.
+function newAgent(r, known) {
   return {
     id: r.agent, name: r.name || r.agent, color: r.color || 'mustard', clientId: String(r.client_id || '').slice(0, 8),
-    allowedTools: r.allowed_tools || [], plate: 'none', runId: null, mode: 'model',
-    calls: 0, blocked: 0, lastCall: '', revokeMs: null, lastDeniedHome: null, killTs: null, stopNote: '',
-    at: 'gate', // gate | rope | <building key> (walk target, Stage B)
+    allowedTools: r.allowed_tools || [], known, plate: 'none', runId: null, mode: 'model',
+    calls: 0, blocked: 0, lastCall: '', last: null, revokeMs: null, killTs: null, stopNote: '',
+    at: 'hatch',
   };
 }
 
 export function initialState(roster = DEFAULT_ROSTER) {
   const agents = {};
-  for (const r of roster) agents[r.agent] = newAgent(r);
+  for (const r of roster) agents[r.agent] = newAgent(r, true);
   const buildings = {};
-  for (const b of BUILDINGS) buildings[b] = { denials: 0, fire: false };
-  return { cursor: 0, agents, buildings, blockedTotal: 0, selected: roster[0]?.agent || 'research-bot', ticker: '', log: [] };
+  for (const b of BUILDINGS) buildings[b] = { denials: 0 };
+  const gates = {};
+  for (const g of GATES) gates[g] = { refused: 0 };
+  return { cursor: 0, agents, buildings, gates, blockedTotal: 0, selected: roster[0]?.agent || 'research-bot', ticker: '', log: [] };
 }
 
 // Refresh names, colours and badges from GET /agents without touching run state.
 export function withRoster(state, roster) {
   const s = structuredClone(state);
   for (const r of roster) {
-    const a = s.agents[r.agent] || (s.agents[r.agent] = newAgent(r));
+    const a = s.agents[r.agent] || (s.agents[r.agent] = newAgent(r, true));
+    a.known = true;
     a.name = r.name || a.name; a.color = r.color || a.color; a.clientId = String(r.client_id || a.clientId).slice(0, 8);
     a.allowedTools = r.allowed_tools || a.allowedTools;
   }
   return s;
 }
 
-export const rung = (denials) => (denials >= 3 ? 2 : denials >= 1 ? 1 : 0);
+// The trouble ladder over a gate's booth: rung 1 (3 puffs) after 2 refusals at that gate, rung 2 (6 puffs) after 4.
+export const rung = (refusals) => (refusals >= 4 ? 2 : refusals >= 2 ? 1 : 0);
 const short = (ev) => `${ev.tool}${ev.args_summary ? ' ' + ev.args_summary.replace(/^[a-z_]+=/, '') : ''}`;
-export const tickerLine = (ev) => `${ev.decision.toUpperCase()} ${ev.tool}: ${ev.reason}${ev.rule ? ` [${ev.rule}]` : ''}`;
+export const tickerLine = (ev) => `${ev.decision.toUpperCase()} ${ev.tool}: ${ev.reason}${ev.rule ? ` [${ev.rule}]` : ''}`
+  + (typeof ev.ms_since_revoke === 'number' ? ` · ${ev.ms_since_revoke} ms after REVOKE` : '');
+
+// The gateway strip and the ledger header: how many decisions, and the gateway's own latency (p50, p95, nearest rank)
+// over the allow and deny rows. Admin and harness rows are not gateway decisions and carry latency 0, so they are left out.
+export function percentile(sorted, q) {
+  if (!sorted.length) return null;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))];
+}
+export function gatewayStats(log) {
+  const rows = (log || []).filter((e) => e.decision === 'allow' || e.decision === 'deny');
+  const ms = rows.map((e) => e.latency_ms).filter((v) => typeof v === 'number' && Number.isFinite(v)).sort((x, y) => x - y);
+  const blocked = rows.filter((e) => e.decision === 'deny').length;
+  return { decisions: rows.length, allowed: rows.length - blocked, blocked, p50: percentile(ms, 0.5), p95: percentile(ms, 0.95) };
+}
+
+// ---------- small step builders (plain data, so the tests can read them) ----------
+const fx = (effect) => ({ fx: effect });
+const leavePen = (a) => (a.at === 'pen' ? [{ pen: 'out' }] : []);
+const OUT_AND_ABOUT = ['plaza', 'gh_window', ...GATES.map((g) => `door_${g}`)];
+// The robot walks on its own only when it is out and about (not held in the pen, not frozen, not down in the hatch).
+const free = (a) => a.known && OUT_AND_ABOUT.includes(a.at) && a.plate !== 'kill' && a.plate !== 'stopped';
 
 export function apply(state, ev) {
   // Order by seq, apply each seq once.
@@ -59,63 +108,124 @@ export function apply(state, ev) {
   s.cursor = ev.seq;
   s.log.push(ev);
   s.ticker = tickerLine(ev);
-  const fx = [];
-  const a = s.agents[ev.agent] || (s.agents[ev.agent] = newAgent({ agent: ev.agent, name: ev.agent }));
+  const out = [];
+  const agentId = ev.agent || 'unknown';
+  const a = s.agents[agentId] || (s.agents[agentId] = newAgent({ agent: agentId, name: agentId }, false));
   a.mode = ev.agent_mode || 'model';
+  const id = a.id;
   const home = TOOL_HOME[ev.tool];
+  const script = (steps) => { if (steps.length) out.push({ kind: 'script', agent: id, steps }); };
 
   switch (ev.decision) {
-    case 'run_started':
-      a.plate = 'active'; a.runId = ev.run_id; a.at = 'gate'; a.calls = 0; a.blocked = 0;
-      a.revokeMs = null; a.lastDeniedHome = null; a.killTs = null; a.stopNote = ''; a.lastCall = 'authenticated';
-      s.selected = ev.agent;
-      fx.push({ kind: 'plate', agent: a.id, plate: 'active' }, { kind: 'move', agent: a.id, to: 'gate' }, { kind: 'banner', text: 'AUTHENTICATED', tone: 'good' });
+    case 'run_started': {
+      a.plate = 'active'; a.runId = ev.run_id; a.calls = 0; a.blocked = 0; a.last = null;
+      a.revokeMs = null; a.killTs = null; a.stopNote = ''; a.lastCall = 'authenticated';
+      const cid = /client (\S+)/.exec(ev.reason || '');
+      if (cid) a.clientId = cid[1].slice(0, 8);
+      s.selected = id;
+      // rise out of the dock hatch, show the ID card at the gatehouse window, plate turns green, go to the plaza
+      const steps = [fx({ kind: 'plate', agent: id, plate: 'none' }), { dismiss: 'chief' }];
+      if (a.at === 'hatch') steps.push({ spawn: true }); else steps.push(...leavePen(a));
+      steps.push({ walk: 'gh_window' }, { wait: 0.2 }, { showId: true },
+        fx({ kind: 'lamp', target: 'chief', tone: 'ok' }), fx({ kind: 'plate', agent: id, plate: 'active' }),
+        fx({ kind: 'banner', text: 'AUTHENTICATED', tone: 'good' }), { wait: 0.3 }, { walk: 'plaza' });
+      script(steps);
+      a.at = 'plaza';
       break;
+    }
 
-    case 'allow':
-      a.calls += 1; a.lastCall = short(ev);
-      if (home === 'gatehouse') fx.push({ kind: 'lamp', building: 'gatehouse' });
-      else if (home) {
-        fx.push({ kind: 'spark', agent: a.id, to: home, ok: true }, { kind: 'lamp', building: home });
-        a.at = home; fx.push({ kind: 'move', agent: a.id, to: home });
+    case 'allow': {
+      a.calls += 1; a.lastCall = short(ev); a.last = { decision: 'allow', tool: ev.tool, ms: ev.latency_ms };
+      if (home && home !== 'gatehouse') {
+        // walk to the islet's gate, show the card, the barrier lifts, cross the bridge; the door lamp and a slip
+        const steps = [];
+        if (a.at !== `door_${home}`) {
+          steps.push(...leavePen(a), { walk: `gate_${home}` }, { wait: 0.3 }, { showId: true }, { gate: home, lamp: 'ok' }, { walk: `door_${home}` });
+        }
+        steps.push(fx({ kind: 'lamp', target: `door:${home}`, tone: 'ok' }), fx({ kind: 'slip', from: `door:${home}`, ok: true }));
+        script(steps);
+        a.at = `door_${home}`;
+      } else {
+        // tools/list (or a tool the island does not know): the gatehouse window
+        const steps = [...leavePen(a)];
+        if (a.at !== 'gh_window') steps.push({ walk: 'gh_window' });
+        steps.push({ showId: true }, fx({ kind: 'lamp', target: 'chief', tone: 'ok' }), fx({ kind: 'slip', from: 'gatehouse', ok: true }));
+        script(steps);
+        a.at = 'gh_window';
       }
-      fx.push({ kind: 'say', agent: a.id, text: a.lastCall, tone: 'good' });
       break;
+    }
 
     case 'deny': {
-      a.blocked += 1; s.blockedTotal += 1; a.lastCall = ev.reason;
+      a.blocked += 1; s.blockedTotal += 1; a.lastCall = ev.reason; a.last = { decision: 'deny', tool: ev.tool, ms: ev.latency_ms };
       if (typeof ev.ms_since_revoke === 'number') a.revokeMs = ev.ms_since_revoke;
       const b = home || 'gatehouse';
-      s.buildings[b].denials += 1;
-      if (home && home !== 'gatehouse') a.lastDeniedHome = home; // tools/list denials never move the fire
-      fx.push(
-        { kind: 'spark', agent: a.id, to: b, ok: false },
-        { kind: 'stamp', agent: a.id, text: `DENIED ${ev.tool}` },
-        { kind: 'ladder', building: b, rung: rung(s.buildings[b].denials), fire: s.buildings[b].fire },
-        { kind: 'banner', text: 'BLOCKED', tone: 'bad' },
-        { kind: 'say', agent: a.id, text: ev.reason, tone: 'bad' },
-        { kind: 'counter', total: s.blockedTotal },
-      );
-      if (a.at !== 'rope') { a.at = 'gate'; fx.push({ kind: 'move', agent: a.id, to: 'gate' }); }
+      if (s.buildings[b]) s.buildings[b].denials += 1;
+      const text = `DENIED ${ev.tool}`;
+      const rule = String(ev.rule || '');
+
+      if (rule.startsWith('status-')) {
+        // revoked or killed: the robot is held in the pen; it shows its card there and is refused there
+        const inPen = a.at === 'pen';
+        const anchor = inPen ? 'pen' : 'gatehouse';
+        script([
+          ...(a.plate === 'revoked' && inPen ? [{ showId: true }] : []),
+          fx({ kind: 'lamp', target: inPen ? 'pen' : 'chief', tone: 'bad' }),
+          fx({ kind: 'stampAt', anchor, text }),
+          fx({ kind: 'slip', from: anchor, ok: false }),
+          fx({ kind: 'packet' }),
+        ]);
+      } else if (rule === 'allow-list' && home && home !== 'gatehouse') {
+        // not on the badge: refused at the islet's gate, and the booth guard walks the robot back to the plaza
+        const g = s.gates[home]; g.refused += 1;
+        const walks = free(a);
+        const steps = walks
+          ? [{ walk: `gate_${home}` }, { wait: 0.3 }, { showId: true }, { gate: home, lamp: 'bad' }]
+          : [fx({ kind: 'lamp', target: `booth:${home}`, tone: 'bad' })];
+        steps.push(fx({ kind: 'stampAt', anchor: `gate:${home}`, text }), fx({ kind: 'counter', gate: home, n: g.refused }),
+          fx({ kind: 'slip', from: `gate:${home}`, ok: false }), fx({ kind: 'packet' }));
+        if (rung(g.refused) > 0) steps.push(fx({ kind: 'smoke', gate: home, rung: rung(g.refused) }));
+        if (walks) { steps.push({ wait: 0.4 }, { escort: { by: `booth:${home}`, to: 'plaza' } }); a.at = 'plaza'; }
+        script(steps);
+      } else {
+        // token, registry-unavailable, header-mismatch, unknown tools: refused at the gatehouse window
+        const walks = free(a);
+        script([
+          ...(walks && a.at !== 'gh_window' ? [{ walk: 'gh_window' }] : []),
+          ...(walks ? [{ showId: true }] : []),
+          fx({ kind: 'lamp', target: 'chief', tone: 'bad' }),
+          fx({ kind: 'stampAt', anchor: 'gatehouse', text }),
+          fx({ kind: 'slip', from: 'gatehouse', ok: false }),
+          fx({ kind: 'packet' }),
+        ]);
+        if (walks) a.at = 'gh_window';
+      }
       break;
     }
 
     case 'revoked':
-      a.plate = 'revoked'; a.at = 'rope'; a.lastCall = ev.reason;
-      fx.push({ kind: 'ack', agent: a.id, action: 'revoke' }); // clears the button's "sent..."
-      fx.push({ kind: 'plate', agent: a.id, plate: 'revoked' }, { kind: 'move', agent: a.id, to: 'rope' }, { kind: 'banner', text: 'REVOKED', tone: 'bad' }, { kind: 'say', agent: a.id, text: ev.reason, tone: 'bad' });
+      a.plate = 'revoked'; a.lastCall = ev.reason;
+      out.push({ kind: 'ack', action: 'revoke' }); // clears the button's "sent..."
+      out.push({ kind: 'halt', agent: id }, { kind: 'plate', agent: id, plate: 'revoked' }, { kind: 'banner', text: 'REVOKED', tone: 'bad' });
+      // the chief guard walks to the robot wherever it stopped and escorts it into the pen
+      if (a.known && a.at !== 'pen' && a.at !== 'hatch') { script([{ escort: { by: 'chief', to: 'pen_gate' } }, { pen: 'in' }]); a.at = 'pen'; }
       break;
 
     case 'restored':
-      a.plate = 'active'; a.at = 'gate'; a.lastCall = ev.reason; a.revokeMs = null;
-      fx.push({ kind: 'ack', agent: a.id, action: 'restore' }); // clears the button's "sent..."
-      fx.push({ kind: 'plate', agent: a.id, plate: 'active' }, { kind: 'move', agent: a.id, to: 'gate' }, { kind: 'banner', text: 'RESTORED', tone: 'good' });
+      a.plate = 'active'; a.lastCall = ev.reason; a.revokeMs = null;
+      out.push({ kind: 'ack', action: 'restore' }); // clears the button's "sent..."
+      out.push({ kind: 'plate', agent: id, plate: 'active' }, { kind: 'banner', text: 'RESTORED', tone: 'good' });
+      if (a.at === 'pen') {
+        script([{ summon: 'chief', to: 'pen_gate', wait: true }, { pen: 'out' }, { walk: 'plaza' }, { dismiss: 'chief' }]);
+        a.at = 'plaza';
+      }
       break;
 
     case 'kill_requested':
       a.plate = 'kill'; a.killTs = ev.ts; a.lastCall = ev.reason;
-      fx.push({ kind: 'ack', agent: a.id, action: 'kill' }); // clears the button's "sent..."
-      fx.push({ kind: 'plate', agent: a.id, plate: 'kill' }, { kind: 'freeze', agent: a.id }, { kind: 'banner', text: 'KILL REQUESTED', tone: 'warn' });
+      out.push({ kind: 'ack', action: 'kill' }); // clears the button's "sent..."
+      out.push({ kind: 'freeze', agent: id }, { kind: 'plate', agent: id, plate: 'kill' }, { kind: 'banner', text: 'KILL REQUESTED', tone: 'warn' });
+      script([{ summon: 'chief', to: 'agent' }]);
       break;
 
     case 'run_stopped': {
@@ -127,20 +237,23 @@ export function apply(state, ev) {
         const ms = a.killTs ? Date.parse(ev.ts) - Date.parse(a.killTs) : NaN;
         a.stopNote = Number.isFinite(ms) ? `run stopped ${ms} ms after KILL` : 'run stopped';
         s.ticker = `${a.stopNote} · ${ev.reason}`;
-        if (a.lastDeniedHome) {
-          s.buildings[a.lastDeniedHome].fire = true;
-          fx.push({ kind: 'ladder', building: a.lastDeniedHome, rung: rung(s.buildings[a.lastDeniedHome].denials), fire: true });
-        }
+        out.push({ kind: 'freeze', agent: id }, { kind: 'plate', agent: id, plate: 'stopped' }, { kind: 'powerDown', agent: id },
+          { kind: 'banner', text: 'RUN KILLED', tone: 'bad' });
+        script([{ summon: 'chief', to: 'agent' }]);
       } else {
-        // A run that ended by itself is not a kill: no fire, and the banner says what happened.
+        // A run that ended by itself: the robot walks back to the dock and sinks into the hatch.
         a.stopNote = `run ended: ${ev.reason}`;
+        out.push({ kind: 'banner', text: 'RUN ENDED', tone: 'muted' });
+        const steps = [fx({ kind: 'plate', agent: id, plate: 'none' })];
+        if (a.at !== 'hatch') steps.push(...leavePen(a), { walk: 'hatch' }, { sink: true });
+        script(steps);
+        a.at = 'hatch';
       }
       a.killTs = null;
-      fx.push({ kind: 'plate', agent: a.id, plate: 'stopped' }, { kind: 'banner', text: killed ? 'RUN KILLED' : 'RUN ENDED', tone: killed ? 'bad' : 'muted' });
       break;
     }
   }
-  return { state: s, effects: fx };
+  return { state: s, effects: out };
 }
 
 // The mode badge is not an event: it is recomputed every second from the source and the poll health.

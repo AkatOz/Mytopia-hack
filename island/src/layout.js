@@ -47,7 +47,9 @@ for (const key of Object.keys(BRIDGES)) {
 export const GATE_OF_TOOL = { read_file: 'files', search_files: 'files', create_issue: 'github', list_issues: 'github', send_email: 'mail', delete_file: 'admin' };
 
 // ---------- the main island's furniture ----------
-export const GATEHOUSE = { x: 0, z: -5.5, w: 7.2, d: 4.5, h: 4.2, window: [0, -2.3], chiefBooth: [-4.8, -2.9], chiefDoor: [-4.0, -2.2], roofTop: [0, 7.3, -5.5] };
+// Integrator: chiefBooth was [-4.8, -2.9]; a booth there stood across the walk from plaza_w to the Mail gate, so world.js
+// builds it at [-6.6, -2.3] (CHIEF_BOOTH). The number here now says where it really is.
+export const GATEHOUSE = { x: 0, z: -5.5, w: 7.2, d: 4.5, h: 4.2, window: [0, -2.3], chiefBooth: [-6.6, -2.3], chiefDoor: [-4.0, -2.2], roofTop: [0, 7.3, -5.5] };
 export const DOCK = { x: 0, z: 11, hatch: [0, 11.6], pierLength: 3.2 };
 export const PEN = { x: 6.5, z: 4, w: 3.0, d: 3.0, gate: [5.0, 4.0], spots: [[6.0, 3.4], [7.1, 4.6]], lamp: [6.5, 2.3] };
 export const BIN = { x: -6.5, z: 4 };
@@ -85,7 +87,8 @@ for (const key of Object.keys(GATES)) {
   EDGES.push([hub, `gate_${key}`], [`gate_${key}`, `bar_${key}`], [`bar_${key}`, `bridge_${key}`], [`bridge_${key}`, `shore_${key}`], [`shore_${key}`, `door_${key}`],
     [`booth_${key}`, `boothdoor_${key}`], [`boothdoor_${key}`, `gate_${key}`]);
 }
-NODES.chief_booth = GATEHOUSE.chiefBooth; EDGES.push(['chief_booth', 'chief_door']);
+// (no chief_booth node: the chief walks home from chief_door to the booth's own point, see actors.js; a node inside the
+// booth would let nearestNode() route a robot that stopped nearby straight through the booth's walls)
 
 const ADJ = {};
 for (const [a, b] of EDGES) { (ADJ[a] ||= new Set()).add(b); (ADJ[b] ||= new Set()).add(a); }
@@ -115,4 +118,7 @@ export function spotOf(slot, place) {
 }
 
 // camera framing for the whole archipelago (docs/ISLAND_V2.md section 1)
-export const FRAMING = { target: [0, -1.5, -3], radius: 29, minZoom: 0.7, maxZoom: 3 };
+// Integrator, 2026-11-07: radius 29 / target [0,-1.5,-3] cut the FILES tower top and the Mail islet off the top of a
+// 1280x720 screen. Measured in the browser: radius 34 aimed at [1, 2, -6] keeps the tower tip (y 26), the Mail cottage,
+// the GitHub islet's edge and the Admin islet's near cliff on screen, with no door or gate under a HUD panel.
+export const FRAMING = { target: [1, 2, -6], radius: 34, minZoom: 0.7, maxZoom: 3 };

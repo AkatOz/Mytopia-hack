@@ -1,7 +1,12 @@
-// Wiring: the event feed (live polling or replay) -> apply() -> effects queue -> scene + HUD.
+// Wiring: the event feed (live polling or replay) -> apply() -> effects -> scene + HUD.
 // The buttons only POST. Nothing on screen changes because of a click; it changes when the gateway's event arrives.
+// Pre-existing (v1, this morning): polling with a cursor, the four buttons, R/T/G/Esc, robot click -> JSON, Save
+// replay, the iris into the ledger room. New today (docs/ISLAND_V2.md section 7): robot scripts go to the actors,
+// replay keeps the recording's own rhythm (real gaps between events, clamped to 0.6..3.5 s, and each robot beat is
+// allowed to finish before the next row), the speech bubbles are gone, the gateway strip, and a new chain (someone pressed RESET elsewhere) resets the picture.
 import { createScene } from './scene.js';
-import { apply, initialState, withRoster, badge, fresh, DEFAULT_ROSTER, ALL_TOOLS } from './reducer.js';
+import { createHud } from './hud.js';
+import { apply, initialState, withRoster, fresh, gatewayStats, DEFAULT_ROSTER } from './reducer.js';
 
 const cfg = Object.assign({ api: '', adminToken: '', pollMs: 1000, staleAfterMs: 3000 }, window.MYTOPIA || {});
 const params = new URLSearchParams(location.search);
@@ -9,43 +14,54 @@ const replayPath = params.get('replay');
 const source = replayPath ? 'replay' : 'live';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let roster = DEFAULT_ROSTER;
 let state = initialState(roster);
-let lastGoodPoll = null, uiSel = null, recordedOn = '';
+let lastGoodPoll = null, uiSel = null, recordedOn = '', chainId = '';
+const pendingBtn = {}; // action -> true while "sent..."
 const scene = await createScene(document.querySelector('three-d-stage'));
-const ensureRobots = () => Object.values(state.agents).forEach((a, i) => scene.addRobot(a.id, a.color, i));
+const hud = createHud(scene, { source, staleAfterMs: cfg.staleAfterMs, lastGoodPoll: () => lastGoodPoll, recordedOn: () => recordedOn, getState: () => state });
+
+// one robot per agent in the roster (an unknown client gets no robot: its refusals are drawn at the gatehouse)
+function ensureRobots() {
+  let slot = 0;
+  for (const a of Object.values(state.agents)) if (a.known) scene.addRobot(a.id, a.color, slot++);
+}
 ensureRobots();
 
-// ---------- effects: instant ones apply at once; timed ones queue, at most three at a time ----------
+// ---------- effects ----------
+// Instant ones apply at once. A 'script' goes to the robot's queue (actors.js plays it step by step; the effects inside
+// it come back here through scene.onFx when their moment comes). Banners and stamps are timed DOM pieces: at most three
+// play at a time, the rest wait.
+// quiet = true: catching up on a backlog, only the state lands (plates, counters, packets, smoke), nothing animates.
+// quiet = 'skipped': a robot skipped a script to keep up with the log: the state lands and stamps and lamps still show.
 const MAX_AT_ONCE = 3, queue = []; let playing = 0;
-const bubbles = {}; // agent -> { text, tone }
-const pendingBtn = {}; // action -> true while "sent..."
-function instant(f) {
+function play(f, quiet = false) {
+  const backlog = quiet === true;
   switch (f.kind) {
+    case 'script': scene.run(f.agent, f.steps, { instant: backlog }); break;
     case 'plate': scene.setPlate(f.agent, f.plate); break;
-    case 'move': scene.move(f.agent, f.to); break;
+    case 'halt': scene.halt(f.agent); break;
     case 'freeze': scene.freeze(f.agent); break;
-    case 'lamp': scene.lamp(f.building); break;
-    case 'ladder': scene.ladder(f.building, f.rung, f.fire); break;
-    case 'say': bubbles[f.agent] = { text: f.text, tone: f.tone, at: performance.now() }; break;
+    case 'powerDown': scene.powerDown(f.agent); break;
+    case 'counter': scene.counter(f.gate, f.n); break;
+    case 'smoke': scene.smoke(f.gate, f.rung); break;
+    case 'packet': scene.packet(backlog); break;
     case 'ack': delete pendingBtn[f.action]; break;
-    case 'counter': break; // the count is read from state in render()
+    case 'lamp': if (!backlog) scene.lamp(f.target, f.tone); break;
+    case 'slip': if (!quiet) scene.slip(f.from, f.ok); break;
+    case 'banner': if (!quiet) { queue.push(f); pump(); } break;
+    case 'stampAt': if (!backlog) { queue.push(f); pump(); } break;
   }
 }
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function timed(f) {
-  if (f.kind === 'spark') return scene.spark(f.agent, f.to, f.ok).then(() => { if (!f.ok) scene.dropPacket(); });
-  if (f.kind === 'banner') { const b = $('banner'); b.textContent = f.text; b.className = `hud paper on ${f.tone}`; return sleep(2000).then(() => { if (b.textContent === f.text) b.classList.remove('on'); }); }
-  if (f.kind === 'stamp') { const p = scene.robotScreen(f.agent); if (!p) return Promise.resolve(); const el = document.createElement('div'); el.className = 'stamp'; el.textContent = f.text; el.style.left = p[0] + 60 + 'px'; el.style.top = p[1] + 40 + 'px'; $('overlay').appendChild(el); return sleep(1600).then(() => el.remove()); }
+  if (f.kind === 'banner') return hud.banner(f.text, f.tone);
+  if (f.kind === 'stampAt') return hud.stampAt(f.anchor, f.text);
   return Promise.resolve();
 }
-const TIMED = new Set(['spark', 'banner', 'stamp']);
 function pump() { while (playing < MAX_AT_ONCE && queue.length) { const f = queue.shift(); playing++; timed(f).finally(() => { playing--; pump(); }); } }
-function play(effects, quiet = false) {
-  for (const f of effects) { if (TIMED.has(f.kind)) { if (!quiet) queue.push(f); } else instant(f); }
-  pump();
-}
+scene.onFx((f, quiet) => play(f, quiet));
 
 // ---------- apply events (one code path for live and replay) ----------
 function ingest(events) {
@@ -53,103 +69,78 @@ function ingest(events) {
     const r = apply(state, ev);
     state = r.state;
     ensureRobots();
-    play(r.effects, events.length > 4 && i < events.length - 2); // catching up on a backlog: no fireworks for old rows
+    const quiet = events.length > 4 && i < events.length - 2; // catching up on a backlog: no fireworks for old rows
+    for (const f of r.effects) play(f, quiet);
     if (['revoked', 'restored', 'kill_requested', 'run_started'].includes(ev.decision) && source === 'live') loadAgents();
     if (ev.decision === 'run_started') uiSel = null;
   });
-  if (events.length) scene.drawLedger(state.log, source);
+  if (events.length) { scene.drawLedger(state.log, source, chainId); strip(); }
   render();
 }
 
 // ---------- HUD ----------
-const PLACE_NAME = { gatehouse: 'GATEWAY', files: 'Files', github: 'GitHub', mail: 'Mail', admin: 'Admin' };
-const PLATE_LABEL = { none: 'NO RUN', active: 'ACTIVE', revoked: 'REVOKED', kill: 'KILL REQUESTED', stopped: 'KILLED' };
 const selected = () => uiSel || state.selected;
-function render() {
-  const a = state.agents[selected()] || Object.values(state.agents)[0];
-  $('tabs').innerHTML = Object.values(state.agents).map((x) => `<button data-agent="${esc(x.id)}" class="${x.id === a.id ? 'sel' : ''}">${esc(x.name)}</button>`).join('');
-  $('c-name').textContent = a.name;
-  $('c-sub').textContent = `client ${a.clientId || '—'}${a.mode !== 'model' ? ` · ${a.mode === 'scripted' ? 'scripted client' : 'replay'}` : ''}`;
-  const plate = a.plate === 'stopped' && !a.stopNote.startsWith('run stopped') ? 'stopped' : a.plate;
-  $('c-status').textContent = a.plate === 'stopped' && !a.stopNote.startsWith('run stopped') ? 'RUN ENDED' : PLATE_LABEL[plate];
-  $('c-status').className = `status st-${plate}`;
-  $('c-badge').textContent = `${a.allowedTools.length} of ${ALL_TOOLS.length} tools`;
-  $('c-calls').textContent = a.calls; $('c-blocked').textContent = a.blocked;
-  $('c-note').textContent = a.revokeMs != null ? `blocked ${a.revokeMs} ms after REVOKE` : a.stopNote;
-  $('c-note').style.color = a.revokeMs != null || a.stopNote.startsWith('run stopped') ? 'var(--bad)' : 'var(--dim)';
-  $('o-count').textContent = state.blockedTotal;
-  $('o-for').textContent = `acts on: ${a.id}`;
-  for (const b of document.querySelectorAll('#ops button')) {
-    const act = b.dataset.act;
-    if (act === 'save') { b.disabled = !state.log.length; continue; }
-    b.disabled = source === 'replay' || !!pendingBtn[act];
-    b.textContent = pendingBtn[act] ? 'sent...' : act.toUpperCase();
-  }
-  const last = state.log[state.log.length - 1];
-  $('ticker').innerHTML = last ? `<span class="seq">#${last.seq}</span><span class="line">${esc(state.ticker)}</span>` : `<span class="line">${source === 'replay' ? 'loading the recording…' : 'waiting for the gateway…'}</span>`;
-  if ($('table').classList.contains('on')) renderTable();
-}
-function renderTable() {
-  $('t-body').innerHTML = state.log.map((e) => `<tr><td>${e.seq}</td><td title="${esc(e.ts)}">${esc(String(e.ts || '').slice(11, 23))}</td><td>${esc(e.agent)}</td><td>${esc(e.tool)}</td><td class="${esc(e.decision)}">${esc(e.decision)}</td><td>${esc(e.rule)}</td><td>${esc(e.reason)}</td><td>${e.latency_ms ?? ''}</td></tr>`).join('');
-}
-function renderBadge() {
-  const m = badge({ source, now: Date.now(), lastGoodPoll, staleAfterMs: cfg.staleAfterMs });
-  const el = $('mode'); el.className = `hud paper ${m}`;
-  const sub = m === 'REPLAY' ? `recorded ${recordedOn || '—'}` : m === 'LIVE' ? 'gateway answering' : lastGoodPoll ? `no answer for ${Math.round((Date.now() - lastGoodPoll) / 1000)} s` : 'no gateway yet';
-  el.innerHTML = `${m}<small>${esc(sub)}</small>`;
-}
-setInterval(renderBadge, 1000); renderBadge();
-
-// name tags, speech bubbles and the BLOCKED bin count follow the 3D scene every frame
-const tags = {};
-function follow() {
-  const ov = $('overlay');
-  for (const a of Object.values(state.agents)) {
-    const p = scene.robotScreen(a.id); if (!p) continue;
-    const t = tags[a.id] ||= Object.assign(ov.appendChild(document.createElement('div')), { className: 'tag' });
-    t.textContent = a.name; t.style.left = p[0] + 'px'; t.style.top = p[1] + 62 + 'px';
-    const b = bubbles[a.id];
-    const bu = tags[a.id + ':b'] ||= Object.assign(ov.appendChild(document.createElement('div')), { className: 'bubble' });
-    const showB = b && (performance.now() - b.at < 7000 || a.id === selected());
-    bu.style.display = showB ? 'block' : 'none';
-    if (showB) { bu.textContent = b.text; bu.className = `bubble ${b.tone || ''}`; bu.style.left = p[0] + 'px'; bu.style.top = p[1] + 'px'; }
-  }
-  for (const k of scene.places()) {
-    const p = scene.placeScreen(k); const t = tags['p:' + k] ||= Object.assign(ov.appendChild(document.createElement('div')), { className: 'tag place' });
-    t.textContent = PLACE_NAME[k]; t.style.left = p[0] + 'px'; t.style.top = Math.max(80, p[1]) + 'px';
-  }
-  const bp = scene.binScreen(); const bc = tags.bin ||= Object.assign(ov.appendChild(document.createElement('div')), { className: 'bincount' });
-  bc.textContent = `BLOCKED ${state.blockedTotal}`; bc.style.left = bp[0] - 30 + 'px'; bc.style.top = bp[1] + 'px';
-  requestAnimationFrame(follow);
-}
-requestAnimationFrame(follow);
+function render() { hud.render(state, { selected: selected(), pending: pendingBtn, source }); }
+function strip() { hud.setGatewayStrip({ ...gatewayStats(state.log), chain: scene.panels.verified() }); }
+scene.onChain(strip);
+setInterval(hud.renderBadge, 1000); hud.renderBadge();
+// the overlay (name tags, stamps, labels, bin count) and the ledger panels follow the 3D scene every frame
+function frame() { hud.follow(); scene.panels.follow(); requestAnimationFrame(frame); }
+requestAnimationFrame(frame);
 
 // ---------- live: poll the gateway ----------
 async function loadAgents() {
   try { const r = await fetch(`${cfg.api}/agents`, { cache: 'no-store' }); if (r.ok) { roster = await r.json(); state = withRoster(state, roster); ensureRobots(); render(); } } catch {}
 }
+// GET /events carries the chain id, which changes only on POST /demo/reset: a new id means a fresh log from seq 1
+function newChain(id) {
+  if (!id) return false;
+  const changed = chainId && id !== chainId;
+  chainId = id;
+  if (!changed) return false;
+  state = withRoster(initialState(roster), roster); uiSel = null;
+  for (const k of Object.keys(pendingBtn)) delete pendingBtn[k];
+  scene.reset(); scene.drawLedger(state.log, source, chainId); strip(); render();
+  return true;
+}
 async function poll() {
   try {
     const r = await fetch(`${cfg.api}/events?since_seq=${state.cursor}`, { cache: 'no-store' });
-    if (r.ok) { const j = await r.json(); lastGoodPoll = Date.now(); renderBadge(); ingest(fresh(j.events, state.cursor)); }
+    if (r.ok) {
+      const j = await r.json(); lastGoodPoll = Date.now(); hud.renderBadge();
+      if (newChain(j.chain)) { setTimeout(poll, 0); return; } // read the new chain from seq 1 right away
+      ingest(fresh(j.events, state.cursor));
+    }
   } catch {}
   setTimeout(poll, cfg.pollMs);
 }
 
-// ---------- replay: one event every 1.5 s, same apply() ----------
+// ---------- replay: the recording's own rhythm, same apply() ----------
 async function replay(path) {
   let events = [];
-  try { const j = await (await fetch(path, { cache: 'no-store' })).json(); events = Array.isArray(j) ? j : j.events || []; }
-  catch (e) { $('ticker').innerHTML = `<span class="line">could not load ${esc(path)}</span>`; return; }
+  try {
+    const j = await (await fetch(path, { cache: 'no-store' })).json();
+    events = Array.isArray(j) ? j : j.events || [];
+    chainId = (!Array.isArray(j) && j.chain) || '';
+  } catch (e) { $('ticker').innerHTML = `<span class="line">could not load ${esc(path)}</span>`; return; }
   events = events.slice().sort((x, y) => x.seq - y.seq);
-  recordedOn = events[0]?.ts ? events[0].ts.slice(0, 10) : ''; renderBadge();
-  for (const ev of events) { ingest([ev]); await sleep(1500); }
+  recordedOn = events[0]?.ts ? events[0].ts.slice(0, 10) : ''; hud.renderBadge();
+  await sleep(800); // let the first frame settle
+  for (let i = 0; i < events.length; i++) {
+    ingest([events[i]]);
+    const next = events[i + 1]; if (!next) break;
+    const gap = (Date.parse(next.ts) - Date.parse(events[i].ts)) / 1000;
+    await sleep(1000 * Math.min(3.5, Math.max(0.6, Number.isFinite(gap) ? gap : 1.5)));
+    // A recording is watched as a story: let the robots finish this beat on screen (a walk across a bridge, a guard's
+    // escort) before the next row lands, at most 12 s more. Live never waits: there the robots speed up instead.
+    for (let waited = 0; scene.busy() && waited < 12000; waited += 100) await sleep(100);
+  }
 }
 
-// ---------- the four buttons: POST and wait for the event ----------
-// Save replay (Stage B): every event seen, as a file the island can play back with ?replay=<file>
+// ---------- the buttons: POST and wait for the event ----------
+// Save replay: every event seen, as a file the island can play back with ?replay=<file>
 function saveReplay() {
-  const blob = new Blob([JSON.stringify({ events: state.log }, null, 1)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ chain: chainId || undefined, events: state.log }, null, 1)], { type: 'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
   a.download = `mytopia-replay-${(state.log[0]?.ts || 'empty').slice(0, 19).replace(/[:T]/g, '-')}.json`;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -172,19 +163,20 @@ async function press(act) {
 $('ops').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (b) press(b.dataset.act); });
 $('tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-agent]'); if (b) { uiSel = b.dataset.agent; render(); } });
 
-// ---------- Stage B: the gatehouse ledger room, entered through an iris wipe ----------
+// ---------- the gatehouse ledger room, entered through an iris wipe ----------
 let irisBusy = false;
 async function room(on) {
   if (irisBusy || scene.inRoom() === on) return;
   irisBusy = true; $('iris').classList.add('shut'); await sleep(380);
-  scene.setRoom(on); document.body.classList.toggle('room', on); scene.drawLedger(state.log, source);
+  scene.setRoom(on); document.body.classList.toggle('room', on); scene.drawLedger(state.log, source, chainId);
   $('iris').classList.remove('shut'); await sleep(380); irisBusy = false;
 }
 $('back').addEventListener('click', () => room(false));
 
 // ---------- keyboard and robot click ----------
 addEventListener('keydown', (e) => {
-  if (e.key === 't' || e.key === 'T') { $('json').classList.remove('on'); $('table').classList.toggle('on'); renderTable(); }
+  if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if (e.key === 't' || e.key === 'T') { $('json').classList.remove('on'); $('table').classList.toggle('on'); hud.renderTable(state); }
   else if (e.key === 'r' || e.key === 'R') { const p = replayPath || 'fixture.json'; location.search = `?replay=${encodeURIComponent(p)}`; }
   else if (e.key === 'g' || e.key === 'G') room(!scene.inRoom());
   else if (e.key === 'Escape') { const open = $('table').classList.contains('on') || $('json').classList.contains('on'); $('table').classList.remove('on'); $('json').classList.remove('on'); if (!open) room(false); }
@@ -200,6 +192,6 @@ document.querySelector('three-d-stage').addEventListener('click', (e) => {
   $('table').classList.remove('on'); $('json').classList.add('on');
 });
 
-render();
+render(); strip();
 if (source === 'replay') replay(replayPath);
 else { loadAgents(); poll(); }

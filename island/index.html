@@ -17,9 +17,11 @@
 @font-face { font-family: "Pixelify Sans"; src: url("fonts/pixelify-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: block; }
 @font-face { font-family: "Pixelify Sans"; src: url("fonts/pixelify-sans-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: block; }
 @font-face { font-family: "VT323"; src: url("fonts/vt323-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: block; }
+/* Mytopia's palette: cream paper, ink brown, signal orange, sage, mustard, brick, slate. No neon, no gradients on UI. */
 :root {
   --ink: #2b221e; --cream: #f3ead7; --paper: #fbf7ee; --orange: #f2892b; --peach: #f7d9b4;
-  --good: #3f8a56; --bad: #b4553e; --warn: #d9a032; --dim: #7a6f62; --line: #d8cbb3;
+  --good: #3f8a56; --bad: #b4553e; --warn: #d9a032; --dim: #7a6f62; --line: #d8cbb3; --slate: #63738a;
+  --good-bg: #dfeedf; --bad-bg: #f6dfd8; --off: #d7d0c4;
   --px: "Pixelify Sans", "VT323", monospace; --vt: "VT323", monospace;
 }
 * { box-sizing: border-box; }
@@ -28,74 +30,119 @@ three-d-stage { position: fixed; inset: 0; display: block; }
 three-d-stage:not(:defined) { visibility: hidden; }
 .paper { background: var(--paper); border: 3px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); }
 .hud { position: fixed; z-index: 5; }
+.good { color: var(--good); } .bad { color: var(--bad); } .dim { color: var(--dim); }
 
-/* mode badge, top right */
-#mode { top: 12px; right: 12px; padding: 4px 12px; font-family: var(--vt); font-size: 26px; line-height: 1.1; text-align: right; }
+/* ---------- top row: brand (left), banner (centre), mode badge (right) ---------- */
+#brand { top: 12px; left: 12px; padding: 4px 12px; font-weight: 600; font-size: 20px; }
+#brand span { color: var(--orange); }
+
+#banner { top: 12px; left: 50%; transform: translateX(-50%); padding: 2px 22px; font-weight: 600; font-size: 40px; line-height: 1.1; letter-spacing: 1px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
+#banner.on { opacity: 1; }
+#banner.good { background: var(--good); color: #fff; } #banner.bad { background: var(--bad); color: #fff; }
+#banner.warn { background: var(--warn); } #banner.muted { background: var(--paper); }
+#mode { top: 12px; right: 12px; width: 206px; padding: 2px 10px; font-family: var(--vt); font-size: 26px; line-height: 1.05; text-align: right; }
 #mode.LIVE { background: var(--good); color: #fff; }
 #mode.STALE { background: var(--warn); color: var(--ink); }
 #mode.REPLAY { background: #8a8278; color: #fff; }
 #mode small { display: block; font-size: 16px; opacity: .9; }
 
-/* brand, top left */
-#brand { top: 12px; left: 12px; padding: 4px 12px; font-weight: 600; font-size: 20px; }
-#brand span { color: var(--orange); }
-
-/* banner, top centre, 44px, 2 s */
-#banner { top: 14px; left: 50%; transform: translateX(-50%); padding: 2px 22px; font-weight: 600; font-size: 44px; letter-spacing: 1px; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap; }
-#banner.on { opacity: 1; }
-#banner.good { background: var(--good); color: #fff; } #banner.bad { background: var(--bad); color: #fff; }
-#banner.warn { background: var(--warn); } #banner.muted { background: var(--paper); }
-
-/* agent card, bottom left (Mytopia's room card) */
-#card { left: 12px; bottom: 64px; width: 300px; padding: 10px 12px; font-size: 15px; }
+/* ---------- left: the agent card (320 px; the left column stays under 340 px). It sits in the bottom-left corner,
+   above the ticker: at 1280x720 the top-left is the FILES tower and its door (measured with the default framing). ---------- */
+#card { left: 12px; bottom: 60px; width: 320px; padding: 8px 12px 10px; }
 #card .tabs { display: flex; gap: 6px; margin-bottom: 6px; }
 #card .tabs button { font: inherit; font-size: 14px; border: 2px solid var(--ink); background: var(--paper); padding: 1px 8px; cursor: pointer; }
 #card .tabs button.sel { background: var(--orange); }
-#card h2 { margin: 0; font-size: 22px; font-weight: 600; }
-#card .sub { font-family: var(--vt); font-size: 18px; color: var(--dim); }
-#card .row { display: flex; justify-content: space-between; font-family: var(--vt); font-size: 20px; line-height: 1.15; }
-#card .status { display: inline-block; padding: 0 8px; border: 2px solid var(--ink); font-family: var(--vt); font-size: 20px; }
-.st-none { background: #d7d0c4; } .st-active { background: var(--good); color: #fff; } .st-revoked { background: var(--bad); color: #fff; }
-.st-kill { background: var(--warn); } .st-stopped { background: var(--ink); color: var(--cream); }
-#card .note { font-family: var(--vt); font-size: 19px; color: var(--bad); min-height: 0; }
+#card .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+#card h2 { margin: 0; font-size: 22px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#card .sub { font-family: var(--vt); font-size: 18px; color: var(--dim); line-height: 1.1; }
+#card .status { flex: none; padding: 0 8px; border: 2px solid var(--ink); font-family: var(--vt); font-size: 19px; line-height: 1.15; }
+.st-none { background: var(--off); } .st-active { background: var(--good); color: #fff; } .st-revoked { background: var(--bad); color: #fff; }
+.st-kill { background: var(--warn); } .st-stopped { background: var(--ink); color: var(--cream); } .st-ended { background: var(--paper); }
+#card .lbl { margin-top: 6px; font-family: var(--vt); font-size: 17px; color: var(--dim); }
+#card .chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 3px 0 6px; }
+.chip { font-family: var(--vt); font-size: 16px; line-height: 1.2; text-align: center; padding: 1px 2px; border: 2px solid var(--ink); white-space: nowrap; overflow: hidden; }
+.chip.on { background: var(--good); color: #fff; }
+.chip.off { background: var(--off); color: var(--dim); border-color: #a39a8c; text-decoration: line-through; }
+.chip.held { background: var(--paper); color: var(--bad); border-style: dashed; text-decoration: line-through; }
+#card .row { font-family: var(--vt); font-size: 20px; line-height: 1.15; }
+#card .row b { font-weight: 400; color: var(--ink); background: var(--cream); padding: 0 4px; }
+#card .note { font-family: var(--vt); font-size: 19px; line-height: 1.15; min-height: 22px; }
 
-/* ticker, bottom */
-#ticker { left: 12px; right: 12px; bottom: 12px; padding: 4px 12px; font-family: var(--vt); font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ---------- right: the operator panel, top (206 px; the right column stays under 230 px), kept short so the GitHub
+   islet below it stays clear; the gateway strip is its own panel in the bottom-right corner ---------- */
+#ops { right: 12px; top: 74px; width: 206px; padding: 6px 10px 8px; }
+#ops .top { display: flex; justify-content: space-between; align-items: baseline; }
+#ops h3 { margin: 0; font-size: 16px; font-weight: 600; }
+#ops .count { font-family: var(--vt); font-size: 44px; line-height: .9; color: var(--bad); }
+#ops .lbl { font-family: var(--vt); font-size: 16px; color: var(--dim); line-height: 1.05; }
+#ops .for { font-family: var(--vt); font-size: 18px; margin: 2px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ops .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 4px 6px 0; }
+#ops button { display: block; width: 100%; padding: 4px 6px; font: 600 15px var(--px); border: 3px solid var(--ink); background: var(--paper); box-shadow: 3px 3px 0 var(--ink); cursor: pointer; text-align: center; color: var(--ink); }
+#ops button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+#ops button[data-act=revoke] { background: var(--bad-bg); } #ops button[data-act=kill] { background: #f3c3b6; }
+#ops button[data-act=restore] { background: var(--good-bg); }
+#ops button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+#ops button.save { background: var(--cream); font-size: 13px; width: calc(100% - 4px); }
+#ops .hint { font-family: var(--vt); font-size: 15px; color: var(--dim); margin-top: 6px; line-height: 1.1; }
+#strip { right: 12px; bottom: 60px; width: 206px; padding: 4px 10px 6px; }
+#strip h4 { margin: 0 0 1px; font-size: 14px; font-weight: 600; letter-spacing: 1px; }
+#strip .kv { display: flex; justify-content: space-between; font-family: var(--vt); font-size: 18px; line-height: 1.15; }
+#strip .kv span { color: var(--dim); }
+#strip .kv b { font-weight: 400; }
+
+/* ---------- bottom: the ticker ---------- */
+#ticker { left: 12px; right: 12px; bottom: 12px; padding: 3px 12px; font-family: var(--vt); font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #ticker .line { background: var(--peach); padding: 0 6px; }
+#ticker .line.t-allow { background: var(--good-bg); } #ticker .line.t-deny { background: var(--bad-bg); }
 #ticker .seq { color: var(--dim); margin-right: 6px; }
 
-/* operator panel, right (Mytopia's Needs-you panel) */
-#ops { right: 12px; top: 76px; width: 200px; padding: 10px 12px; }
-#ops h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
-#ops .count { font-family: var(--vt); font-size: 54px; line-height: 1; color: var(--bad); }
-#ops .lbl { font-family: var(--vt); font-size: 18px; color: var(--dim); margin-bottom: 8px; }
-#ops .for { font-family: var(--vt); font-size: 18px; margin: 4px 0 6px; }
-#ops button { display: block; width: 100%; margin: 6px 0; padding: 6px 8px; font: 600 18px var(--px); border: 3px solid var(--ink); background: var(--paper); box-shadow: 3px 3px 0 var(--ink); cursor: pointer; text-align: left; }
-#ops button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
-#ops button[data-act=revoke] { background: #f6dfd8; } #ops button[data-act=kill] { background: #f3c3b6; }
-#ops button[data-act=restore] { background: #dfeedf; }
-#ops button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
-#ops button.save { background: var(--cream); font-size: 15px; }
-#roomtitle { top: 60px; left: 12px; padding: 4px 12px; font-size: 18px; display: none; }
+/* ---------- the ledger room ---------- */
+/* in the room the two boards fill the view: only the title bar (bottom), the mode badge, the strip and the ticker stay */
+#roomtitle { bottom: 60px; left: 12px; padding: 4px 12px; font-size: 18px; display: none; }
 #roomtitle button { font: inherit; margin-left: 10px; border: 2px solid var(--ink); background: var(--orange); cursor: pointer; }
-body.room #roomtitle { display: block; } body.room #overlay { display: none; }
+body.room #roomtitle { display: block; } body.room #overlay, body.room #card, body.room #ops, body.room #mode small { display: none; }
 #iris { position: fixed; inset: 0; z-index: 9; pointer-events: none; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 #iris div { width: 300vmax; height: 300vmax; border-radius: 50%; box-shadow: 0 0 0 300vmax var(--ink); flex: none; transition: width .35s ease-in, height .35s ease-in; }
 #iris.shut div { width: 0; height: 0; }
-#ops .hint { font-family: var(--vt); font-size: 16px; color: var(--dim); margin-top: 6px; }
+/* the two DOM boards placed over the 3D boards by ledger.js (font size set from the board's size on screen) */
+.room-panel { position: fixed; z-index: 4; overflow: hidden; pointer-events: none; font-family: var(--vt); line-height: 1.12; }
+.ledger-panel { background: #2f3a33; color: #f3ead7; padding: .35em .6em; }
+.ledger-panel .lp-title { display: flex; justify-content: space-between; align-items: baseline; font-size: 1.35em; }
+.ledger-panel .lp-title b { font-family: var(--px); font-weight: 600; letter-spacing: .05em; }
+.ledger-panel .lp-title span { color: #b3aca2; font-size: .75em; }
+.ledger-panel .lp-strip { color: #d8cfbe; border-bottom: 2px solid #59665d; padding-bottom: .15em; margin-bottom: .15em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ledger-panel .lp-strip .ok { color: #9cc29c; } .ledger-panel .lp-strip .bad { color: #ea7a6b; } .ledger-panel .lp-strip .dim { color: #b3aca2; }
+.ledger-panel table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.ledger-panel td, .ledger-panel th { padding: 0 .3em 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ledger-panel th { text-align: left; color: #b3aca2; font-weight: 400; border-bottom: 1px solid #59665d; white-space: normal; vertical-align: bottom; line-height: 1; }
+.ledger-panel td.num { text-align: right; padding-right: .7em; }
+.ledger-panel td.hash { color: #b3aca2; }
+.ledger-panel tr.t-allow .dec { color: #9cc29c; } .ledger-panel tr.t-deny .dec { color: #ea7a6b; }
+.ledger-panel tr.t-admin .dec { color: #f2c46b; } .ledger-panel tr.t-harness .dec { color: #cfd6d0; }
+.ledger-panel tr.newest td { background: #4a4a3a; color: #fbf7ee; }
+.ledger-panel td.empty { color: #b3aca2; padding-top: .6em; }
+.chain-panel { background: var(--paper); color: var(--ink); padding: .4em .6em; border: 2px solid var(--ink); }
+.chain-panel .cp-title { font-family: var(--px); font-weight: 600; font-size: 1.25em; }
+.chain-panel .cp-sub { color: var(--dim); font-size: .8em; margin-bottom: .2em; }
+.chain-panel ul { list-style: none; margin: 0; padding: 0; }
+.chain-panel li { white-space: nowrap; overflow: hidden; border-bottom: 1px solid var(--line); }
+.chain-panel li span:first-child { display: inline-block; width: 1.1em; }
+.chain-panel li .arrow { color: var(--dim); margin: 0 .35em; }
+.chain-panel .ok { color: var(--good); } .chain-panel .bad { color: var(--bad); } .chain-panel .dim { color: var(--dim); }
+.chain-panel .cp-foot { margin-top: .25em; font-size: .85em; }
 
-/* things drawn over the 3D scene */
+/* ---------- things drawn over the 3D scene (placed by hud.js, top-left corner; the collision pass keeps them apart) ---------- */
 #overlay { position: fixed; inset: 0; pointer-events: none; z-index: 4; }
-.tag { position: absolute; transform: translate(-50%, -100%); font-family: var(--vt); font-size: 18px; background: var(--paper); border: 2px solid var(--ink); padding: 0 6px; white-space: nowrap; }
-.tag.place { background: var(--ink); color: var(--cream); font-size: 20px; }
-.bubble { position: absolute; transform: translate(-50%, calc(-100% - 26px)); max-width: 280px; font-family: var(--vt); font-size: 19px; line-height: 1.05; background: var(--paper); border: 2px solid var(--ink); padding: 3px 8px; box-shadow: 2px 2px 0 var(--ink); white-space: normal; }
-.bubble.bad { background: #f6dfd8; } .bubble.good { background: #dfeedf; }
-.stamp { position: absolute; transform: translate(-50%, -50%) rotate(-8deg); font: 600 36px var(--px); color: var(--bad); border: 4px solid var(--bad); padding: 0 10px; background: rgba(251, 247, 238, .85); white-space: nowrap; animation: stamp 1.6s ease-out forwards; }
-@keyframes stamp { 0% { transform: translate(-50%, -50%) rotate(-8deg) scale(1.8); opacity: 0; } 12% { transform: translate(-50%, -50%) rotate(-8deg) scale(1); opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
-.bincount { position: absolute; transform: translate(-50%, -100%); font: 600 18px var(--px); background: var(--bad); color: #fff; border: 2px solid var(--ink); padding: 0 8px; }
+.tag { position: absolute; display: none; font-family: var(--vt); font-size: 18px; line-height: 1.1; background: var(--paper); border: 2px solid var(--ink); padding: 0 6px; white-space: nowrap; }
+.tag[data-plate=active] { border-color: var(--good); } .tag[data-plate=revoked] { background: var(--bad-bg); border-color: var(--bad); }
+.tag[data-plate=kill] { background: #f7e7c4; border-color: var(--warn); } .tag[data-plate=stopped] { background: var(--off); }
+.tag.place { background: var(--ink); color: var(--cream); font-size: 20px; border-color: var(--ink); letter-spacing: 1px; }
+.stamp { position: absolute; display: none; transform-origin: 50% 50%; font: 600 30px var(--px); line-height: 1.1; color: var(--bad); border: 4px solid var(--bad); padding: 0 10px; background: var(--paper); white-space: nowrap; animation: stamp 1.6s ease-out forwards; }
+@keyframes stamp { 0% { transform: rotate(-6deg) scale(1.15); opacity: 0; } 10% { transform: rotate(-6deg) scale(1); opacity: 1; } 80% { opacity: 1; } 100% { transform: rotate(-6deg) scale(1); opacity: 0; } }
+.bincount { position: absolute; display: none; font: 600 17px var(--px); line-height: 1.2; background: var(--bad); color: #fff; border: 2px solid var(--ink); padding: 0 8px; white-space: nowrap; }
 
-/* T table and robot JSON */
-.sheet { position: fixed; inset: 60px 230px 70px 20px; z-index: 8; overflow: auto; padding: 12px; display: none; }
+/* ---------- T table and robot JSON ---------- */
+.sheet { position: fixed; inset: 56px 240px 64px 20px; z-index: 8; overflow: auto; padding: 12px; display: none; }
 .sheet.on { display: block; }
 .sheet h3 { margin: 0 0 8px; }
 .sheet table { border-collapse: collapse; width: 100%; font-family: var(--vt); font-size: 18px; }
@@ -105,20 +152,26 @@ body.room #roomtitle { display: block; } body.room #overlay { display: none; }
 .sheet .allow { color: var(--good); } .sheet .deny { color: var(--bad); }
 .sheet pre { font-family: var(--vt); font-size: 18px; white-space: pre-wrap; margin: 0; }
 
-/* about 800 px wide: the terminal takes the right 38 percent of the projector */
+/* ---------- about 800 px wide (the terminal takes the right 38 percent of the projector) ---------- */
 @media (max-width: 900px) {
-  #banner { font-size: 32px; } #card { width: 250px; font-size: 13px; } #card h2 { font-size: 18px; }
-  #ops { width: 146px; top: 70px; padding: 8px; } #ops .count { font-size: 38px; } #ops .lbl, #ops .for, #ops button.save { background: var(--cream); font-size: 15px; }
-#roomtitle { top: 60px; left: 12px; padding: 4px 12px; font-size: 18px; display: none; }
-#roomtitle button { font: inherit; margin-left: 10px; border: 2px solid var(--ink); background: var(--orange); cursor: pointer; }
-body.room #roomtitle { display: block; } body.room #overlay { display: none; }
-#iris { position: fixed; inset: 0; z-index: 9; pointer-events: none; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-#iris div { width: 300vmax; height: 300vmax; border-radius: 50%; box-shadow: 0 0 0 300vmax var(--ink); flex: none; transition: width .35s ease-in, height .35s ease-in; }
-#iris.shut div { width: 0; height: 0; }
-#ops .hint { font-size: 15px; } #ops button { font-size: 14px; padding: 3px 6px; margin: 4px 0; }
-  #mode { font-size: 22px; } .tag.place { font-size: 16px; }
-  #ticker { font-size: 18px; } .bubble { font-size: 16px; max-width: 200px; } .stamp { font-size: 28px; }
-  .sheet { inset: 56px 190px 60px 10px; }
+  #banner { font-size: 30px; }
+
+  #card { width: 252px; padding: 5px 8px 6px; } #card h2 { font-size: 18px; }
+  #card .tabs { margin-bottom: 3px; } #card .tabs button { font-size: 12px; }
+  #card .sub { font-size: 15px; } #card .row, #card .note { font-size: 17px; }
+  #card .lbl { display: none; } #card .chips { margin-top: 4px; } #card .note { min-height: 0; } /* keeps the dock hatch clear */
+  .chip { font-size: 13px; } #card .status { font-size: 16px; }
+  #mode { width: 156px; font-size: 22px; } #mode small { font-size: 14px; }
+  #ops { width: 156px; top: 66px; padding: 5px 7px; } #ops .count { font-size: 34px; }
+  #ops .lbl, #ops .for { font-size: 15px; } #ops button { font-size: 12px; padding: 3px 2px; } #ops .btns { gap: 4px; }
+  #strip { width: 156px; } #strip .kv { font-size: 15px; } #ops .hint { font-size: 13px; }
+  .tag.place { font-size: 16px; } .tag { font-size: 16px; } .stamp { font-size: 24px; }
+  #ticker { font-size: 18px; }
+  .sheet { inset: 52px 180px 56px 10px; }
+}
+@media (max-height: 640px) {
+  #ops button { padding: 2px 4px; } #ops .hint { display: none; }
+  #card .lbl { display: none; } #card .chips { margin-top: 4px; }
 }
 </style>
 </head>
@@ -132,33 +185,41 @@ body.room #roomtitle { display: block; } body.room #overlay { display: none; }
 
 <div id="card" class="hud paper">
   <div class="tabs" id="tabs"></div>
-  <h2 id="c-name">Research Bot</h2>
+  <div class="head"><h2 id="c-name">Research Bot</h2><span class="status st-none" id="c-status">NO RUN</span></div>
   <div class="sub" id="c-sub">client —</div>
-  <div class="row"><span>status</span><span class="status st-none" id="c-status">NO RUN</span></div>
-  <div class="row"><span>badge</span><span id="c-badge">—</span></div>
-  <div class="row"><span>calls allowed</span><span id="c-calls">0</span></div>
-  <div class="row"><span>calls blocked</span><span id="c-blocked">0</span></div>
-  <div class="note" id="c-note"></div>
+  <div class="lbl">badge · <span id="c-badge">—</span></div>
+  <div class="chips" id="c-chips"></div>
+  <div class="row" id="c-calls">calls allowed 0 · blocked 0</div>
+  <div class="row" id="c-last">last: —</div>
+  <div class="note dim" id="c-note"></div>
 </div>
 
 <div id="ops" class="hud paper">
-  <h3>BLOCKED</h3>
-  <div class="count" id="o-count">0</div>
-  <div class="lbl">calls refused at the gate</div>
+  <div class="top"><h3>BLOCKED</h3><span class="count" id="o-count">0</span></div>
+  <div class="lbl">calls refused by the gateway</div>
   <div class="for" id="o-for">acts on: research-bot</div>
-  <button data-act="revoke">REVOKE</button>
-  <button data-act="restore">RESTORE</button>
-  <button data-act="kill">KILL</button>
-  <button data-act="reset">RESET</button>
+  <div class="btns">
+    <button data-act="revoke">REVOKE</button>
+    <button data-act="restore">RESTORE</button>
+    <button data-act="kill">KILL</button>
+    <button data-act="reset">RESET</button>
+  </div>
   <button data-act="save" class="save">SAVE REPLAY</button>
-  <div class="hint">G gatehouse ledger · T table · R replay · Esc back</div>
+  <div class="hint">G ledger · T table · R replay · Esc back</div>
+</div>
+
+<div id="strip" class="hud paper">
+  <h4>GATEWAY</h4>
+  <div class="kv"><span>decisions</span><b id="g-dec">0</b></div>
+  <div class="kv"><span>p50 · p95</span><b id="g-lat">— · —</b></div>
+  <div class="kv"><span>chain</span><b id="g-chain" class="dim">not verified</b></div>
 </div>
 
 <div id="ticker" class="hud paper"><span class="line">waiting for the gateway…</span></div>
 
 <div id="roomtitle" class="hud paper"><b>GATEHOUSE</b> · the ledger, every call in order <button id="back">← island (Esc)</button></div>
 <div id="iris"><div></div></div>
-<div id="table" class="sheet paper"><h3>Every event seen</h3><table><thead><tr><th>seq</th><th>ts</th><th>agent</th><th>tool</th><th>decision</th><th>rule</th><th>reason</th><th>latency_ms</th></tr></thead><tbody id="t-body"></tbody></table></div>
+<div id="table" class="sheet paper"><h3>Every event seen</h3><table><thead><tr><th>seq</th><th>ts</th><th>agent</th><th>tool</th><th>decision</th><th>rule</th><th>reason</th><th>latency_ms</th><th>since revoke</th></tr></thead><tbody id="t-body"></tbody></table></div>
 <div id="json" class="sheet paper"><h3 id="j-title">Latest event</h3><pre id="j-body"></pre></div>
 
 <script src="three-d-stage.js"></script>
